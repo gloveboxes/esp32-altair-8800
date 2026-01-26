@@ -1,0 +1,12 @@
+# Build output
+build/
+
+# Generated config
+sdkconfig
+sdkconfig.old
+
+# Managed components
+managed_components/
+
+# macOS
+.DS_Store

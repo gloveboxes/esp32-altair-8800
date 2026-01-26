@@ -1,0 +1,14 @@
+# Set target to ESP32-S3
+CONFIG_IDF_TARGET="esp32s3"
+
+# Set CPU frequency to 240 MHz
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Set flash size to 16 MB
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Enable USB Serial JTAG console
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Increase default task stack size
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096

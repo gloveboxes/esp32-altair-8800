@@ -1,0 +1,28 @@
+{
+  "C_Cpp.default.compilerPath": "${env:HOME}/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/**",
+    "${env:HOME}/esp/esp-idf/components/**",
+    "${workspaceFolder}/build/config"
+  ],
+  "C_Cpp.default.defines": [
+    "ESP_PLATFORM",
+    "IDF_VER=\"6.1\""
+  ],
+  "C_Cpp.default.cStandard": "c17",
+  "files.associations": {
+    "sdkconfig": "ini",
+    "*.h": "c"
+  },
+  "idf.espIdfPath": "${env:HOME}/esp/esp-idf",
+  "idf.toolsPath": "${env:HOME}/.espressif",
+  "idf.pythonInstallPath": "/opt/homebrew/bin/python3",
+  "idf.port": "/dev/tty.usbmodem101",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "idf.flashType": "JTAG"
+}
