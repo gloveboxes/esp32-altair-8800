@@ -26,6 +26,9 @@
 // Front panel display
 #include "altair_panel.h"
 
+// I/O port handlers
+#include "PortDrivers/io_ports.h"
+
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
 
@@ -61,21 +64,6 @@ static void terminal_write(uint8_t c)
 static uint8_t sense(void)
 {
     return 0x00;  // No sense switches configured
-}
-
-// I/O port handlers for ports not handled by the CPU core
-// Note: Disk ports 0x08-0x0A are handled directly via disk_controller_t
-static uint8_t io_port_in(uint8_t port)
-{
-    (void)port;
-    return 0xFF;  // Unused ports return 0xFF
-}
-
-static void io_port_out(uint8_t port, uint8_t data)
-{
-    (void)port;
-    (void)data;
-    // Unused ports - ignore writes
 }
 
 void app_main(void)
