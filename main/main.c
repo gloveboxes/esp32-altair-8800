@@ -12,6 +12,9 @@
 #include "memory.h"
 #include "pico_88dcdd_flash.h"
 
+// Front panel display
+#include "altair_panel.h"
+
 // Disk images (embedded in flash)
 #include "cpm63k_disk.h"
 #include "bdsc_v1_60_disk.h"
@@ -83,6 +86,13 @@ void app_main(void)
     // Wait for serial terminal to connect
     vTaskDelay(pdMS_TO_TICKS(1000));
 
+    // Start front panel display task on Core 1
+    printf("Starting front panel display on Core 1...\n");
+    altair_panel_start();
+    
+    // Give the display task time to initialize
+    vTaskDelay(pdMS_TO_TICKS(500));
+
     // Print banner
     printf("\n\n");
     printf("========================================\n");
@@ -152,6 +162,11 @@ void app_main(void)
     // Main emulation loop - run CPU cycles with periodic yield
     for (;;) {
         i8080_cycle(&cpu);
+        
+        // Update front panel display state (read by panel task on Core 1)
+        g_panel_address = cpu.address_bus;
+        g_panel_data = cpu.data_bus;
+        g_panel_status = cpu.cpuStatus;
         
         // Yield to FreeRTOS periodically to avoid watchdog timeout
         if (++cycle_count >= YIELD_CYCLES) {
