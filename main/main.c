@@ -7,17 +7,24 @@
 #include "driver/usb_serial_jtag.h"
 #include "hal/usb_serial_jtag_ll.h"
 
-// Altair 8800 emulator includes
+// Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
 #include "intel8080.h"
 #include "memory.h"
+
+// SD Card support
+#define SD_CARD_SUPPORT
+#ifdef SD_CARD_SUPPORT
+#include "sdcard_esp32.h"
+#include "esp32_88dcdd_sd_card.h"
+#else
 #include "pico_88dcdd_flash.h"
-
-// Front panel display
-#include "altair_panel.h"
-
 // Disk images (embedded in flash)
 #include "cpm63k_disk.h"
 #include "bdsc_v1_60_disk.h"
+#endif
+
+// Front panel display
+#include "altair_panel.h"
 
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
@@ -110,6 +117,62 @@ void app_main(void)
     }
     printf("\n");
 
+#ifdef SD_CARD_SUPPORT
+    // Initialize SD card
+    printf("Initializing SD card...\n");
+    if (!sdcard_esp32_init()) {
+        printf("SD card initialization failed!\n");
+        printf("Possible causes:\n");
+        printf("  - No SD card inserted\n");
+        printf("  - SD card not formatted as FAT32\n");
+        printf("  - Incorrect wiring\n");
+        return;
+    }
+    
+    // Print SD card info
+    uint64_t total_bytes = sdcard_esp32_get_total_bytes();
+    uint64_t used_bytes = sdcard_esp32_get_used_bytes();
+    printf("SD card total: %llu MB\n", total_bytes / (1024 * 1024));
+    printf("SD card used:  %llu MB\n", used_bytes / (1024 * 1024));
+    printf("\n");
+
+    // Initialize disk controller
+    printf("Initializing disk controller...\n");
+    esp32_sd_disk_init();
+
+    // Load disk images from SD card (4 drives: A, B, C, D)
+    printf("Loading DISK_A: %s\n", DISK_A_PATH);
+    if (esp32_sd_disk_load(0, DISK_A_PATH)) {
+        printf("  DISK_A loaded successfully\n");
+    } else {
+        printf("  DISK_A load failed!\n");
+        return;
+    }
+
+    printf("Loading DISK_B: %s\n", DISK_B_PATH);
+    if (esp32_sd_disk_load(1, DISK_B_PATH)) {
+        printf("  DISK_B loaded successfully\n");
+    } else {
+        printf("  DISK_B load failed!\n");
+        return;
+    }
+
+    printf("Loading DISK_C: %s\n", DISK_C_PATH);
+    if (esp32_sd_disk_load(2, DISK_C_PATH)) {
+        printf("  DISK_C loaded successfully\n");
+    } else {
+        printf("  DISK_C load failed!\n");
+        return;
+    }
+
+    printf("Loading DISK_D: %s\n", DISK_D_PATH);
+    if (esp32_sd_disk_load(3, DISK_D_PATH)) {
+        printf("  DISK_D loaded successfully\n");
+    } else {
+        printf("  DISK_D load failed!\n");
+        return;
+    }
+#else
     // Initialize disk controller
     printf("Initializing disk controller...\n");
     pico_disk_init();
@@ -131,12 +194,23 @@ void app_main(void)
         printf("  DISK_B load failed!\n");
         return;
     }
+#endif
 
     // Load disk boot loader ROM at 0xFF00
     printf("Loading disk boot loader ROM at 0xFF00...\n");
     loadDiskLoader(0xFF00);
 
     // Set up disk controller for CPU
+#ifdef SD_CARD_SUPPORT
+    static disk_controller_t disk_controller = {
+        .disk_select = (port_out)esp32_sd_disk_select,
+        .disk_status = (port_in)esp32_sd_disk_status,
+        .disk_function = (port_out)esp32_sd_disk_function,
+        .sector = (port_in)esp32_sd_disk_sector,
+        .write = (port_out)esp32_sd_disk_write,
+        .read = (port_in)esp32_sd_disk_read
+    };
+#else
     static disk_controller_t disk_controller = {
         .disk_select = (port_out)pico_disk_select,
         .disk_status = (port_in)pico_disk_status,
@@ -145,6 +219,7 @@ void app_main(void)
         .write = (port_out)pico_disk_write,
         .read = (port_in)pico_disk_read
     };
+#endif
 
     // Initialize CPU
     printf("Initializing Intel 8080 CPU...\n");
