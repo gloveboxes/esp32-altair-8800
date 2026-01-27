@@ -4,6 +4,10 @@ CONFIG_IDF_TARGET="esp32s3"
 # Set CPU frequency to 240 MHz
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
+# Disable task watchdog on Core 1 IDLE task
+# (Core 1 runs a CPU-intensive emulator that starves IDLE1)
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
 # Set flash size to 16 MB
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 

@@ -1,3 +1,21 @@
+/**
+ * @file main.c
+ * @brief Altair 8800 Emulator for ESP32-S3
+ *
+ * Core Allocation:
+ * ----------------
+ * Core 0 (PRO_CPU / Default): Display and system I/O
+ *   - USB Serial JTAG terminal I/O
+ *   - Front panel LCD display updates
+ *   - WiFi (when enabled)
+ *   - FreeRTOS system tasks
+ *
+ * Core 1 (APP_CPU): Altair 8800 emulation and storage
+ *   - Intel 8080 instruction execution
+ *   - SD card disk I/O (synchronous with emulator)
+ *   - Tight emulation loop with minimal interruption
+ */
+
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -5,7 +23,6 @@
 #include "esp_flash.h"
 #include "esp_task_wdt.h"
 #include "driver/usb_serial_jtag.h"
-#include "hal/usb_serial_jtag_ll.h"
 
 // Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
 #include "intel8080.h"
@@ -31,13 +48,95 @@
 
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
-
-// Cycle counter for periodic FreeRTOS yield
-#define YIELD_CYCLES 10000
-static uint32_t cycle_count = 0;
+#define CTRL_KEY(ch) ((ch) & 0x1F)
 
 // CPU instance
 static intel8080_t cpu;
+
+// Process character through ANSI escape sequence state machine
+static uint8_t process_ansi_sequence(uint8_t ch)
+{
+    // Translate ANSI cursor sequences to the control keys CP/M expects (WordStar style).
+    enum
+    {
+        KEY_STATE_NORMAL = 0,
+        KEY_STATE_ESC,
+        KEY_STATE_ESC_BRACKET,
+        KEY_STATE_ESC_BRACKET_NUM
+    };
+
+    static uint8_t key_state = KEY_STATE_NORMAL;
+    static uint8_t pending_key = 0;
+
+    switch (key_state)
+    {
+        case KEY_STATE_NORMAL:
+            if (ch == 0x1B)
+            {
+                key_state = KEY_STATE_ESC;
+                return 0x00; // Start of escape sequence
+            }
+            if (ch == 0x7F || ch == 0x08)
+            {
+                return (uint8_t)CTRL_KEY('H'); // Map delete/backspace to Ctrl-H (0x08)
+            }
+            return ch;
+
+        case KEY_STATE_ESC:
+            if (ch == '[')
+            {
+                key_state = KEY_STATE_ESC_BRACKET;
+                return 0x00; // Control sequence introducer
+            }
+            key_state = KEY_STATE_NORMAL;
+            return ch; // Pass through unknown sequences
+
+        case KEY_STATE_ESC_BRACKET:
+            switch (ch)
+            {
+                case 'A':
+                    key_state = KEY_STATE_NORMAL;
+                    return (uint8_t)CTRL_KEY('E'); // Up -> Ctrl-E
+                case 'B':
+                    key_state = KEY_STATE_NORMAL;
+                    return (uint8_t)CTRL_KEY('X'); // Down -> Ctrl-X
+                case 'C':
+                    key_state = KEY_STATE_NORMAL;
+                    return (uint8_t)CTRL_KEY('D'); // Right -> Ctrl-D
+                case 'D':
+                    key_state = KEY_STATE_NORMAL;
+                    return (uint8_t)CTRL_KEY('S'); // Left -> Ctrl-S
+                case '2':
+                    // Insert key sends ESC[2~ - need to consume the tilde
+                    pending_key = (uint8_t)CTRL_KEY('O'); // Insert -> Ctrl-O
+                    key_state = KEY_STATE_ESC_BRACKET_NUM;
+                    return 0x00;
+                case '3':
+                    // Delete key sends ESC[3~ - need to consume the tilde
+                    pending_key = (uint8_t)CTRL_KEY('G'); // Delete -> Ctrl-G
+                    key_state = KEY_STATE_ESC_BRACKET_NUM;
+                    return 0x00;
+                default:
+                    key_state = KEY_STATE_NORMAL;
+                    return 0x00; // Ignore other sequences
+            }
+
+        case KEY_STATE_ESC_BRACKET_NUM:
+            key_state = KEY_STATE_NORMAL;
+            if (ch == '~')
+            {
+                // Return the pending key now that we've consumed the tilde
+                uint8_t result = pending_key;
+                pending_key = 0;
+                return result;
+            }
+            pending_key = 0;
+            return 0x00; // Unexpected character, ignore
+    }
+
+    key_state = KEY_STATE_NORMAL;
+    return 0x00;
+}
 
 // Terminal read function - non-blocking using USB Serial JTAG driver
 static uint8_t terminal_read(void)
@@ -46,7 +145,8 @@ static uint8_t terminal_read(void)
     // Try to read one byte with no wait (0 ticks timeout)
     int len = usb_serial_jtag_read_bytes(&c, 1, 0);
     if (len > 0) {
-        return (uint8_t)(c & ASCII_MASK_7BIT);
+        uint8_t ch = (uint8_t)(c & ASCII_MASK_7BIT);
+        return process_ansi_sequence(ch);
     }
     return 0x00;  // No character available
 }
@@ -55,9 +155,8 @@ static uint8_t terminal_read(void)
 static void terminal_write(uint8_t c)
 {
     c &= ASCII_MASK_7BIT;  // Take first 7 bits only
-    usb_serial_jtag_write_bytes(&c, 1, portMAX_DELAY);
-    // Flush immediately to ensure output in release mode's tight loop
-    usb_serial_jtag_ll_txfifo_flush();
+    // Non-blocking write - drop character if buffer full or USB disconnected
+    usb_serial_jtag_write_bytes(&c, 1, 0);
 }
 
 // Sense switches - return high byte of address bus (simple implementation)
@@ -66,54 +165,36 @@ static uint8_t sense(void)
     return 0x00;  // No sense switches configured
 }
 
-void app_main(void)
+//-----------------------------------------------------------------------------
+// Emulator Task (runs on Core 1)
+//-----------------------------------------------------------------------------
+#define EMULATOR_TASK_STACK_SIZE  8192
+#define EMULATOR_TASK_PRIORITY    10    // High priority for consistent timing
+
+// Flag to signal initialization status
+static volatile bool g_init_failed = false;
+
+static void emulator_task(void *pvParameters)
 {
-    // Disable watchdog for main task (tight CPU emulation loop)
-    esp_task_wdt_deinit();
+    (void)pvParameters;
     
-    // Initialize USB Serial JTAG driver for non-blocking terminal I/O
-    usb_serial_jtag_driver_config_t usb_config = {
-        .rx_buffer_size = 1024,
-        .tx_buffer_size = 1024,
-    };
-    usb_serial_jtag_driver_install(&usb_config);
-    
-    // Wait for serial terminal to connect
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    printf("Emulator task started on Core %d\n", xPortGetCoreID());
 
-    // Start front panel display task on Core 1
-    printf("Starting front panel display on Core 1...\n");
-    altair_panel_start();
-    
-    // Give the display task time to initialize
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    // Print banner
-    printf("\n\n");
-    printf("========================================\n");
-    printf("  Altair 8800 Emulator - ESP32-S3\n");
-    printf("========================================\n\n");
-
-    // Print chip info
-    esp_chip_info_t chip_info;
-    esp_chip_info(&chip_info);
-    printf("Chip: ESP32-S3 with %d CPU core(s)\n", chip_info.cores);
-    
-    uint32_t flash_size;
-    if (esp_flash_get_size(NULL, &flash_size) == ESP_OK) {
-        printf("Flash size: %lu MB\n", flash_size / (1024 * 1024));
-    }
-    printf("\n");
-
+    //-------------------------------------------------------------------------
+    // Initialize SD card and disk system on Core 1 (same core as emulator)
+    // This ensures synchronous disk I/O doesn't cross core boundaries
+    //-------------------------------------------------------------------------
 #ifdef SD_CARD_SUPPORT
     // Initialize SD card
-    printf("Initializing SD card...\n");
+    printf("Initializing SD card on Core 1...\n");
     if (!sdcard_esp32_init()) {
         printf("SD card initialization failed!\n");
         printf("Possible causes:\n");
         printf("  - No SD card inserted\n");
         printf("  - SD card not formatted as FAT32\n");
         printf("  - Incorrect wiring\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
         return;
     }
     
@@ -130,66 +211,42 @@ void app_main(void)
 
     // Load disk images from SD card (4 drives: A, B, C, D)
     printf("Loading DISK_A: %s\n", DISK_A_PATH);
-    if (esp32_sd_disk_load(0, DISK_A_PATH)) {
-        printf("  DISK_A loaded successfully\n");
-    } else {
+    if (!esp32_sd_disk_load(0, DISK_A_PATH)) {
         printf("  DISK_A load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
         return;
     }
+    printf("  DISK_A loaded successfully\n");
 
     printf("Loading DISK_B: %s\n", DISK_B_PATH);
-    if (esp32_sd_disk_load(1, DISK_B_PATH)) {
-        printf("  DISK_B loaded successfully\n");
-    } else {
+    if (!esp32_sd_disk_load(1, DISK_B_PATH)) {
         printf("  DISK_B load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
         return;
     }
+    printf("  DISK_B loaded successfully\n");
 
     printf("Loading DISK_C: %s\n", DISK_C_PATH);
-    if (esp32_sd_disk_load(2, DISK_C_PATH)) {
-        printf("  DISK_C loaded successfully\n");
-    } else {
+    if (!esp32_sd_disk_load(2, DISK_C_PATH)) {
         printf("  DISK_C load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
         return;
     }
+    printf("  DISK_C loaded successfully\n");
 
     printf("Loading DISK_D: %s\n", DISK_D_PATH);
-    if (esp32_sd_disk_load(3, DISK_D_PATH)) {
-        printf("  DISK_D loaded successfully\n");
-    } else {
+    if (!esp32_sd_disk_load(3, DISK_D_PATH)) {
         printf("  DISK_D load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
         return;
     }
-#else
-    // Initialize disk controller
-    printf("Initializing disk controller...\n");
-    pico_disk_init();
-
-    // Load CPM disk image into drive 0 (DISK_A)
-    printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
-    if (pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len)) {
-        printf("  DISK_A loaded successfully (%u bytes)\n", cpm63k_dsk_len);
-    } else {
-        printf("  DISK_A load failed!\n");
-        return;
-    }
-
-    // Load BDSC disk image into drive 1 (DISK_B)
-    printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
-    if (pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len)) {
-        printf("  DISK_B loaded successfully (%u bytes)\n", bdsc_v1_60_dsk_len);
-    } else {
-        printf("  DISK_B load failed!\n");
-        return;
-    }
-#endif
-
-    // Load disk boot loader ROM at 0xFF00
-    printf("Loading disk boot loader ROM at 0xFF00...\n");
-    loadDiskLoader(0xFF00);
+    printf("  DISK_D loaded successfully\n");
 
     // Set up disk controller for CPU
-#ifdef SD_CARD_SUPPORT
     static disk_controller_t disk_controller = {
         .disk_select = (port_out)esp32_sd_disk_select,
         .disk_status = (port_in)esp32_sd_disk_status,
@@ -199,6 +256,31 @@ void app_main(void)
         .read = (port_in)esp32_sd_disk_read
     };
 #else
+    // Initialize disk controller (embedded flash disks)
+    printf("Initializing disk controller...\n");
+    pico_disk_init();
+
+    // Load CPM disk image into drive 0 (DISK_A)
+    printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
+    if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len)) {
+        printf("  DISK_A load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
+        return;
+    }
+    printf("  DISK_A loaded successfully (%u bytes)\n", cpm63k_dsk_len);
+
+    // Load BDSC disk image into drive 1 (DISK_B)
+    printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
+    if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len)) {
+        printf("  DISK_B load failed!\n");
+        g_init_failed = true;
+        vTaskDelete(NULL);
+        return;
+    }
+    printf("  DISK_B loaded successfully (%u bytes)\n", bdsc_v1_60_dsk_len);
+
+    // Set up disk controller for CPU
     static disk_controller_t disk_controller = {
         .disk_select = (port_out)pico_disk_select,
         .disk_status = (port_in)pico_disk_status,
@@ -208,6 +290,10 @@ void app_main(void)
         .read = (port_in)pico_disk_read
     };
 #endif
+
+    // Load disk boot loader ROM at 0xFF00
+    printf("Loading disk boot loader ROM at 0xFF00...\n");
+    loadDiskLoader(0xFF00);
 
     // Initialize CPU
     printf("Initializing Intel 8080 CPU...\n");
@@ -219,22 +305,74 @@ void app_main(void)
     i8080_examine(&cpu, 0xFF00);
 
     printf("\n");
-    printf("Starting Altair 8800 emulation...\n");
+    printf("Starting Altair 8800 emulation on Core 1...\n");
     printf("========================================\n\n");
-
-    // Main emulation loop - run CPU cycles with periodic yield
+    
+    // Main emulation loop - tight loop for maximum performance
     for (;;) {
         i8080_cycle(&cpu);
-        
-        // Update front panel display state (read by panel task on Core 1)
-        g_panel_address = cpu.address_bus;
-        g_panel_data = cpu.data_bus;
-        g_panel_status = cpu.cpuStatus;
-        
-        // Yield to FreeRTOS periodically to avoid watchdog timeout
-        if (++cycle_count >= YIELD_CYCLES) {
-            cycle_count = 0;
-            taskYIELD();
+    }
+}
+
+void app_main(void)
+{
+    // Initialize USB Serial JTAG driver for non-blocking terminal I/O
+    usb_serial_jtag_driver_config_t usb_config = {
+        .rx_buffer_size = 128,   // Single-char input, just need small queue
+        .tx_buffer_size = 128,   // Single-char output, just need small queue
+    };
+    usb_serial_jtag_driver_install(&usb_config);
+
+
+    // Print banner
+    printf("\n\n");
+    printf("========================================\n");
+    printf("  Altair 8800 Emulator - ESP32-S3\n");
+    printf("========================================\n\n");
+
+    // Print chip info
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    printf("Chip: ESP32-S3 with %d CPU core(s)\n", chip_info.cores);
+    printf("Core 0: Display, terminal I/O\n");
+    printf("Core 1: Emulation, SD card I/O\n");
+    
+    uint32_t flash_size;
+    if (esp_flash_get_size(NULL, &flash_size) == ESP_OK) {
+        printf("Flash size: %lu MB\n", flash_size / (1024 * 1024));
+    }
+    printf("\n");
+
+    // Initialize front panel display on Core 0
+    printf("Initializing front panel display on Core 0...\n");
+    altair_panel_init();
+    
+    // Start emulator task on Core 1 (handles SD card init and CPU emulation)
+    printf("Starting emulator task on Core 1...\n");
+    xTaskCreatePinnedToCore(
+        emulator_task,
+        "altair_emu",
+        EMULATOR_TASK_STACK_SIZE,
+        NULL,
+        EMULATOR_TASK_PRIORITY,
+        NULL,
+        1  // Pin to Core 1
+    );
+
+    // Core 0 main loop - handle display updates
+    for (;;) {
+        // Check if emulator initialization failed
+        if (g_init_failed) {
+            printf("Emulator initialization failed. Halting.\n");
+            for (;;) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
         }
+        
+        // Update front panel display (reads directly from CPU struct)
+        altair_panel_update(&cpu);
+        
+        // Update at ~60Hz
+        vTaskDelay(pdMS_TO_TICKS(17));
     }
 }

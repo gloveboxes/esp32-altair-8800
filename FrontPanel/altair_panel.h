@@ -3,7 +3,8 @@
  * @brief Altair 8800 Front Panel Display for ESP32-S3
  * 
  * Displays CPU state (address bus, data bus, status LEDs) on ILI9341 LCD.
- * Runs as a FreeRTOS task on Core 1 to avoid blocking the emulator.
+ * Display update runs on Core 0, called from main loop.
+ * Emulator runs on Core 1.
  */
 
 #ifndef ALTAIR_PANEL_H
@@ -11,13 +12,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
-//-----------------------------------------------------------------------------
-// Global CPU state (updated by emulator on Core 0, read by panel on Core 1)
-//-----------------------------------------------------------------------------
-extern volatile uint16_t g_panel_address;   // Address bus (A15-A0)
-extern volatile uint8_t  g_panel_data;      // Data bus (D7-D0)
-extern volatile uint16_t g_panel_status;    // Status LEDs
+#include "intel8080.h"
 
 // Status bit definitions (directly usable for LED display)
 #define STATUS_INTE  (1 << 0)   // Interrupts enabled
@@ -32,32 +27,28 @@ extern volatile uint16_t g_panel_status;    // Status LEDs
 #define STATUS_INT   (1 << 9)   // Interrupt request
 
 //-----------------------------------------------------------------------------
-// Panel Task API
+// Panel API
 //-----------------------------------------------------------------------------
 
 /**
- * @brief Start the front panel display task on Core 1
+ * @brief Initialize the front panel display
  * 
- * Initializes the LCD and starts a FreeRTOS task that updates the display
- * at approximately 60Hz, showing the current CPU state.
+ * Initializes the LCD hardware and draws static elements.
+ * Call once at startup before altair_panel_update().
+ * 
+ * @return true on success, false on failure
  */
-void altair_panel_start(void);
+bool altair_panel_init(void);
 
 /**
- * @brief Update panel state from emulator
+ * @brief Update the front panel display
  * 
- * Call this from the emulator loop to update the displayed CPU state.
- * Thread-safe (uses volatile globals).
+ * Reads CPU state and updates the display.
+ * Call this periodically from Core 0 main loop (~60Hz recommended).
+ * Only redraws LEDs that have changed state for efficiency.
  * 
- * @param address Current address bus value
- * @param data Current data bus value  
- * @param status Current status flags
+ * @param cpu Pointer to the Intel 8080 CPU struct
  */
-static inline void altair_panel_update(uint16_t address, uint8_t data, uint16_t status)
-{
-    g_panel_address = address;
-    g_panel_data = data;
-    g_panel_status = status;
-}
+void altair_panel_update(const intel8080_t *cpu);
 
 #endif // ALTAIR_PANEL_H

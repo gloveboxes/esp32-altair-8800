@@ -3,7 +3,7 @@
  * @brief Altair 8800 Front Panel Display for ESP32-S3
  * 
  * Displays CPU state on ILI9341 LCD using direct-write (no framebuffer).
- * Runs as a FreeRTOS task on Core 1 at ~60Hz refresh rate.
+ * Display updates run on Core 0 at ~60Hz refresh rate.
  * Only redraws LEDs that have changed state for efficiency.
  */
 
@@ -19,11 +19,12 @@
 static const char *TAG = "AltairPanel";
 
 //-----------------------------------------------------------------------------
-// Global CPU state (written by emulator, read by panel task)
+// Local state for change detection
 //-----------------------------------------------------------------------------
-volatile uint16_t g_panel_address = 0;
-volatile uint8_t  g_panel_data = 0;
-volatile uint16_t g_panel_status = 0;
+static uint16_t last_status = 0;
+static uint16_t last_address = 0;
+static uint8_t last_data = 0;
+static bool panel_initialized = false;
 
 //-----------------------------------------------------------------------------
 // Layout constants (matching Pico reference implementation)
@@ -90,7 +91,7 @@ static void draw_static_elements(void)
         } else {
             snprintf(label, sizeof(label), " %d", i);
         }
-        ili9341_draw_string_small(x + 4, Y_ADDRESS + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
+        ili9341_draw_string_small(x + 2, Y_ADDRESS + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
         x += LED_SPACING_ADDRESS;
     }
     
@@ -103,7 +104,7 @@ static void draw_static_elements(void)
     for (int i = 7; i >= 0; i--) {
         char label[3];
         snprintf(label, sizeof(label), "%d", i);
-        ili9341_draw_string_small(x + 5, Y_DATA + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
+        ili9341_draw_string_small(x + 8, Y_DATA + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
         x += LED_SPACING_DATA;
     }
     
@@ -203,74 +204,61 @@ static void update_changed_leds(uint16_t new_status, uint16_t old_status,
 }
 
 //-----------------------------------------------------------------------------
-// Panel Task
+// Panel API Functions
 //-----------------------------------------------------------------------------
 
-#define PANEL_TASK_STACK_SIZE   4096
-#define PANEL_TASK_PRIORITY     5
-#define PANEL_UPDATE_INTERVAL_MS 17  // ~60Hz
-
-static void panel_task(void *pvParameters)
+bool altair_panel_init(void)
 {
-    (void)pvParameters;
-    
-    ESP_LOGI(TAG, "Panel task started on Core %d", xPortGetCoreID());
+    ESP_LOGI(TAG, "Initializing panel on Core %d", xPortGetCoreID());
     
     // Initialize display
     if (ili9341_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize display!");
-        vTaskDelete(NULL);
-        return;
+        return false;
     }
     
     // Draw static elements
     draw_static_elements();
     
-    // Initialize with current state
-    uint16_t last_status = g_panel_status;
-    uint16_t last_address = g_panel_address;
-    uint8_t last_data = g_panel_data;
+    // Initialize tracking state to 0
+    last_status = 0;
+    last_address = 0;
+    last_data = 0;
     
-    // Draw initial LED state
-    draw_all_leds(last_status, last_address, last_data);
+    // Draw initial LED state (all off)
+    draw_all_leds(0, 0, 0);
     
-    ESP_LOGI(TAG, "Panel initialized, entering update loop");
+    panel_initialized = true;
+    ESP_LOGI(TAG, "Panel initialized successfully");
     
-    // Update loop
-    TickType_t last_wake_time = xTaskGetTickCount();
+    return true;
+}
+
+void altair_panel_update(const intel8080_t *cpu)
+{
+    if (!panel_initialized || cpu == NULL) {
+        return;
+    }
     
-    for (;;) {
-        // Read current CPU state (volatile reads)
-        uint16_t cur_status = g_panel_status;
-        uint16_t cur_address = g_panel_address;
-        uint8_t cur_data = g_panel_data;
+    // Read current CPU state directly from CPU struct
+    uint16_t cur_status = cpu->cpuStatus;
+    uint16_t cur_address = cpu->address_bus;
+    uint8_t cur_data = cpu->data_bus;
+    
+    // Only update if something changed
+    if (cur_status != last_status || cur_address != last_address || cur_data != last_data) {
+        update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
         
-        // Only update if something changed
-        if (cur_status != last_status || cur_address != last_address || cur_data != last_data) {
-            update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
-            
-            last_status = cur_status;
-            last_address = cur_address;
-            last_data = cur_data;
-        }
-        
-        // Wait until next update interval
-        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
+        last_status = cur_status;
+        last_address = cur_address;
+        last_data = cur_data;
     }
 }
 
-void altair_panel_start(void)
-{
-    ESP_LOGI(TAG, "Starting Altair front panel task on Core 1");
-    
-    // Create task pinned to Core 1 (emulator runs on Core 0)
-    xTaskCreatePinnedToCore(
-        panel_task,
-        "altair_panel",
-        PANEL_TASK_STACK_SIZE,
-        NULL,
-        PANEL_TASK_PRIORITY,
-        NULL,
-        1  // Core 1
-    );
-}
+//-----------------------------------------------------------------------------
+// Legacy Task-based API (for backward compatibility)
+//-----------------------------------------------------------------------------
+
+#define PANEL_TASK_STACK_SIZE   4096
+#define PANEL_TASK_PRIORITY     5
+#define PANEL_UPDATE_INTERVAL_MS 17  // ~60Hz
