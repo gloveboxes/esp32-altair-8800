@@ -1,4 +1,7 @@
 idf_component_register(SRCS "main.c"
+                             "config.c"
+                             "wifi.c"
+                             "../captive_portal/captive_portal.c"
                              "../PortDrivers/io_ports.c"
                              "../PortDrivers/time_io.c"
                              "../PortDrivers/utility_io.c"
@@ -15,6 +18,7 @@ idf_component_register(SRCS "main.c"
                                     "../Altair8800"
                                     "../Disks"
                                     "../drivers/sdcard_esp32"
+                                    "../captive_portal"
                        REQUIRES fatfs 
                                 driver 
                                 esp_lcd 
@@ -22,4 +26,10 @@ idf_component_register(SRCS "main.c"
                                 sdmmc
                                 esp_driver_sdmmc
                                 esp_driver_usb_serial_jtag
-                                esp_timer)
+                                esp_timer
+                                nvs_flash
+                                esp_wifi
+                                esp_http_server
+                                esp_netif
+                                esp_event
+                                lwip)

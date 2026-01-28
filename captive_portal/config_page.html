@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Altair 8800 - WiFi Setup</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: #e0e0e0;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 420px;
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            font-size: 28px;
+            color: #4fc3f7;
+            margin-bottom: 5px;
+        }
+        .logo p {
+            color: #888;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #b0b0b0;
+        }
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background: #fff;
+            color: #333;
+            font-size: 16px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #4fc3f7;
+            box-shadow: 0 0 0 3px rgba(79, 195, 247, 0.2);
+        }
+        input::placeholder {
+            color: #999;
+        }
+        .hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%);
+            color: #000;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(79, 195, 247, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .section-title {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #4fc3f7;
+            margin: 30px 0 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(79, 195, 247, 0.3);
+        }
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+        .dns-box {
+            margin-top: 12px;
+            display: none;
+        }
+        .dns-box label {
+            margin-bottom: 6px;
+            color: #b0b0b0;
+        }
+        .dns-row {
+            display: flex;
+            gap: 8px;
+        }
+        .dns-row input {
+            flex: 1;
+        }
+        .copy-btn {
+            padding: 12px 14px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(79, 195, 247, 0.15);
+            color: #4fc3f7;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            width: auto;
+        }
+        .copy-btn:hover {
+            background: rgba(79, 195, 247, 0.25);
+        }
+        .open-btn {
+            padding: 12px 14px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(76, 175, 80, 0.15);
+            color: #81c784;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            width: auto;
+        }
+        .open-btn:hover {
+            background: rgba(76, 175, 80, 0.25);
+        }
+        .dns-warning {
+            margin-top: 8px;
+            color: #e0e0e0;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .status.success {
+            background: rgba(76, 175, 80, 0.2);
+            color: #81c784;
+            display: block;
+        }
+        .status.error {
+            background: rgba(244, 67, 54, 0.2);
+            color: #e57373;
+            display: block;
+        }
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid transparent;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .footer {
+            text-align: center;
+            margin-top: 25px;
+            font-size: 12px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>⚡ Altair 8800</h1>
+            <p>WiFi Configuration Portal</p>
+        </div>
+        
+        <form id="configForm" action="/configure" method="POST">
+            <div class="section-title">WiFi Network</div>
+            
+            <div class="form-group">
+                <label for="ssid">Network Name (SSID)</label>
+                <input type="text" id="ssid" name="ssid" required 
+                       maxlength="32" placeholder="Your WiFi network name">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">WiFi Password</label>
+                <input type="password" id="password" name="password" 
+                       maxlength="63" placeholder="WiFi password">
+                <div class="hint">Leave empty for open networks</div>
+            </div>
+            
+            <div class="section-title">Remote File System (Optional)</div>
+            
+            <div class="form-group">
+                <label for="rfs_ip">RFS Server IP Address</label>
+                <input type="text" id="rfs_ip" name="rfs_ip" 
+                       maxlength="45" placeholder="e.g., 192.168.1.100">
+                <div class="hint">IP address of the Remote FS server for disk access</div>
+            </div>
+            
+            <button type="submit" id="submitBtn">
+                <span id="btnText">Save & Connect</span>
+                <div class="spinner" id="spinner"></div>
+            </button>
+        </form>
+        
+        <div class="status" id="status"></div>
+        <div class="dns-box" id="dnsBox">
+            <label for="dnsUrl">Device mDNS address</label>
+            <div class="dns-row">
+                <input type="text" id="dnsUrl" readonly>
+                <button type="button" class="copy-btn" id="copyBtn">Copy</button>
+                <button type="button" class="open-btn" id="openBtn">Open</button>
+            </div>
+            <div class="dns-warning">Make sure you're connected to the same Wi‑Fi network as the Altair before opening.</div>
+        </div>
+        
+        <div class="footer">
+            The device will reboot after saving configuration
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('configForm');
+        const status = document.getElementById('status');
+        const btnText = document.getElementById('btnText');
+        const spinner = document.getElementById('spinner');
+        const submitBtn = document.getElementById('submitBtn');
+        const dnsBox = document.getElementById('dnsBox');
+        const dnsUrl = document.getElementById('dnsUrl');
+        const copyBtn = document.getElementById('copyBtn');
+        const openBtn = document.getElementById('openBtn');
+
+        function normalizeMdns(value) {
+            return String(value || '')
+                .replace(/^.*mDNS:\s*/i, '')
+                .replace(/^.*DNS:\s*/i, '')
+                .trim();
+        }
+
+        copyBtn.addEventListener('click', async () => {
+            if (!dnsUrl.value) return;
+            const cleanValue = normalizeMdns(dnsUrl.value);
+            dnsUrl.value = cleanValue;
+
+            try {
+                await navigator.clipboard.writeText(cleanValue);
+                copyBtn.textContent = 'Copied';
+                setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+            } catch (e) {
+                const temp = document.createElement('textarea');
+                temp.value = cleanValue;
+                temp.setAttribute('readonly', '');
+                temp.style.position = 'absolute';
+                temp.style.left = '-9999px';
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                document.body.removeChild(temp);
+                copyBtn.textContent = 'Copied';
+                setTimeout(() => (copyBtn.textContent = 'Copy'), 1500);
+            }
+        });
+
+        openBtn.addEventListener('click', () => {
+            if (!dnsUrl.value) return;
+            const cleanValue = normalizeMdns(dnsUrl.value);
+            dnsUrl.value = cleanValue;
+            window.open(cleanValue, '_blank');
+        });
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            btnText.style.display = 'none';
+            spinner.style.display = 'block';
+            submitBtn.disabled = true;
+            status.className = 'status';
+            status.style.display = 'none';
+            
+            const formData = new URLSearchParams(new FormData(form));
+            
+            try {
+                const response = await fetch('/configure', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formData
+                });
+                
+                const contentType = response.headers.get('content-type') || '';
+                const result = contentType.includes('application/json')
+                    ? await response.json()
+                    : await response.text();
+                
+                if (response.ok) {
+                    status.textContent = '✓ Configuration saved! Rebooting...';
+                    status.className = 'status success';
+                    btnText.textContent = 'Submitted';
+                    btnText.style.display = 'block';
+                    spinner.style.display = 'none';
+                    if (result && (result.mdns || result.mdns_url || result.mdnsUrl)) {
+                        let mdns = normalizeMdns(result.mdns || result.mdns_url || result.mdnsUrl);
+                        if (!mdns.startsWith('http://') && !mdns.startsWith('https://')) {
+                            mdns = 'http://' + mdns + ':8088/';
+                        }
+                        dnsUrl.value = mdns;
+                        dnsBox.style.display = 'block';
+                    }
+                    setTimeout(() => {
+                        status.textContent = 'Please reconnect to your WiFi network and access the Altair at its new IP address.';
+                    }, 3000);
+                } else {
+                    throw new Error(result || 'Configuration failed');
+                }
+            } catch (error) {
+                status.textContent = '✗ ' + error.message;
+                status.className = 'status error';
+                btnText.style.display = 'block';
+                spinner.style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

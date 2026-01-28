@@ -22,7 +22,13 @@
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
+
+// WiFi and configuration
+#include "config.h"
+#include "wifi.h"
+#include "captive_portal.h"
 
 // Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
 #include "intel8080.h"
@@ -52,6 +58,10 @@
 
 // CPU instance
 static intel8080_t cpu;
+
+// Global WiFi status
+static bool g_wifi_connected = false;
+static char g_ip_address[16] = {0};
 
 // Process character through ANSI escape sequence state machine
 static uint8_t process_ansi_sequence(uint8_t ch)
@@ -174,9 +184,110 @@ static uint8_t sense(void)
 // Flag to signal initialization status
 static volatile bool g_init_failed = false;
 
+// Flag to signal emulator should start (after WiFi setup)
+static volatile bool g_emulator_can_start = false;
+
+//-----------------------------------------------------------------------------
+// WiFi Setup
+//-----------------------------------------------------------------------------
+
+/**
+ * @brief Check for config clear request during early boot
+ *
+ * Waits briefly for user to press 'C' to clear WiFi credentials
+ * and enter captive portal mode.
+ */
+static bool check_config_clear_request(void)
+{
+    printf("\nWiFi credentials found in flash storage.\n");
+    printf("Press 'C' within 5 seconds to clear config and enter AP mode...\n");
+
+    int64_t start_time = esp_timer_get_time();
+    while ((esp_timer_get_time() - start_time) < 5000000) {  // 5 seconds
+        uint8_t c;
+        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
+        if (len > 0 && (c == 'c' || c == 'C')) {
+            printf("\nClearing WiFi configuration...\n");
+            config_clear();
+            return true;  // Config was cleared
+        }
+    }
+    printf("\n");
+    return false;  // Config not cleared
+}
+
+/**
+ * @brief Initialize WiFi - connect to stored network or start captive portal
+ */
+static void setup_wifi(void)
+{
+    // Initialize WiFi subsystem
+    if (!wifi_init()) {
+        printf("WiFi initialization failed!\n");
+        return;
+    }
+
+    // Check for stored credentials
+    if (config_exists()) {
+        // Give user chance to clear config
+        if (check_config_clear_request()) {
+            // Config was cleared, fall through to captive portal
+        } else {
+            // Try to connect to stored network
+            printf("Connecting to WiFi...\n");
+            wifi_result_t result = wifi_connect(15000);  // 15 second timeout
+
+            if (result == WIFI_RESULT_OK) {
+                g_wifi_connected = true;
+                wifi_get_ip(g_ip_address, sizeof(g_ip_address));
+                printf("WiFi connected! IP: %s\n", g_ip_address);
+
+                const char* mdns_name = get_mdns_hostname();
+                if (mdns_name) {
+                    printf("mDNS hostname: %s.local\n", mdns_name);
+                }
+                return;  // Successfully connected
+            }
+
+            printf("WiFi connection failed (result=%d), starting captive portal...\n", result);
+        }
+    } else {
+        printf("No WiFi credentials configured - starting captive portal\n");
+    }
+
+    // Start captive portal for configuration
+    if (captive_portal_start()) {
+        printf("\n");
+        printf("==============================================\n");
+        printf("  WiFi Setup Mode\n");
+        printf("  Connect to: '%s'\n", CAPTIVE_PORTAL_AP_SSID);
+        printf("  Then open: http://%s/\n", captive_portal_get_ip());
+        printf("==============================================\n");
+        printf("\n");
+
+        // Run captive portal until configuration is saved (device will reboot)
+        while (captive_portal_is_running()) {
+            captive_portal_poll();
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    } else {
+        printf("Failed to start captive portal!\n");
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Emulator Task (runs on Core 1)
+//-----------------------------------------------------------------------------
+
 static void emulator_task(void *pvParameters)
 {
     (void)pvParameters;
+
+    // Wait for WiFi setup to complete before starting emulator
+    printf("Emulator task waiting for WiFi setup...\n");
+    while (!g_emulator_can_start) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
     
     printf("Emulator task started on Core %d\n", xPortGetCoreID());
 
@@ -323,6 +434,8 @@ void app_main(void)
     };
     usb_serial_jtag_driver_install(&usb_config);
 
+    // Brief delay to let USB enumerate
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     // Print banner
     printf("\n\n");
@@ -334,7 +447,7 @@ void app_main(void)
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     printf("Chip: ESP32-S3 with %d CPU core(s)\n", chip_info.cores);
-    printf("Core 0: Display, terminal I/O\n");
+    printf("Core 0: Display, terminal I/O, WiFi\n");
     printf("Core 1: Emulation, SD card I/O\n");
     
     uint32_t flash_size;
@@ -343,11 +456,15 @@ void app_main(void)
     }
     printf("\n");
 
+    // Initialize configuration (NVS storage)
+    printf("Initializing configuration...\n");
+    config_init();
+
     // Initialize front panel display on Core 0
     printf("Initializing front panel display on Core 0...\n");
     altair_panel_init();
     
-    // Start emulator task on Core 1 (handles SD card init and CPU emulation)
+    // Start emulator task on Core 1 (will wait for WiFi setup)
     printf("Starting emulator task on Core 1...\n");
     xTaskCreatePinnedToCore(
         emulator_task,
@@ -359,7 +476,15 @@ void app_main(void)
         1  // Pin to Core 1
     );
 
-    // Core 0 main loop - handle display updates
+    // Setup WiFi (may start captive portal if no credentials)
+    // This blocks until WiFi is connected or captive portal exits
+    setup_wifi();
+
+    // Signal emulator to start
+    printf("WiFi setup complete, starting emulator...\n");
+    g_emulator_can_start = true;
+
+    // Core 0 main loop - handle display updates and captive portal
     for (;;) {
         // Check if emulator initialization failed
         if (g_init_failed) {
@@ -367,6 +492,11 @@ void app_main(void)
             for (;;) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
+        }
+        
+        // Poll captive portal if running (handles reboot after config save)
+        if (captive_portal_is_running()) {
+            captive_portal_poll();
         }
         
         // Update front panel display (reads directly from CPU struct)
