@@ -1,10 +1,10 @@
 {
   "C_Cpp.default.compilerPath": "${env:HOME}/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
   "C_Cpp.default.includePath": [
-    "${workspaceFolder}/Altair8800",
+    "${workspaceFolder}/altair8800",
     "${workspaceFolder}/main",
-    "${workspaceFolder}/FrontPanel",
-    "${workspaceFolder}/PortDrivers",
+    "${workspaceFolder}/front_panel",
+    "${workspaceFolder}/port_drivers",
     "${workspaceFolder}/captive_portal",
     "${workspaceFolder}/drivers",
     "${workspaceFolder}/terminal",
