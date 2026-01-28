@@ -29,6 +29,7 @@
 #include "config.h"
 #include "wifi.h"
 #include "captive_portal.h"
+#include "websocket_console.h"
 
 // Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
 #include "intel8080.h"
@@ -62,6 +63,9 @@ static intel8080_t cpu;
 // Global WiFi status
 static bool g_wifi_connected = false;
 static char g_ip_address[16] = {0};
+
+// WebSocket console enable flag (set when WiFi connects)
+static volatile bool g_websocket_enabled = false;
 
 // Process character through ANSI escape sequence state machine
 static uint8_t process_ansi_sequence(uint8_t ch)
@@ -148,11 +152,20 @@ static uint8_t process_ansi_sequence(uint8_t ch)
     return 0x00;
 }
 
-// Terminal read function - non-blocking using USB Serial JTAG driver
+// Terminal read function - non-blocking
+// Checks WebSocket console first (if enabled), then USB Serial JTAG
 static uint8_t terminal_read(void)
 {
+    // Check WebSocket console first (if WiFi connected and clients present)
+    if (g_websocket_enabled) {
+        uint8_t ws_ch;
+        if (websocket_console_try_dequeue_input(&ws_ch)) {
+            return (uint8_t)(ws_ch & ASCII_MASK_7BIT);
+        }
+    }
+
+    // Fall back to USB Serial JTAG
     uint8_t c;
-    // Try to read one byte with no wait (0 ticks timeout)
     int len = usb_serial_jtag_read_bytes(&c, 1, 0);
     if (len > 0) {
         uint8_t ch = (uint8_t)(c & ASCII_MASK_7BIT);
@@ -162,11 +175,18 @@ static uint8_t terminal_read(void)
 }
 
 // Terminal write function
+// Sends to both WebSocket clients (if connected) and USB Serial JTAG
 static void terminal_write(uint8_t c)
 {
     c &= ASCII_MASK_7BIT;  // Take first 7 bits only
-    // Non-blocking write - drop character if buffer full or USB disconnected
-    usb_serial_jtag_write_bytes(&c, 1, 0);
+
+    // Send to WebSocket clients (if enabled)
+    if (g_websocket_enabled) {
+        websocket_console_enqueue_output(c);
+    }
+
+    // Always send to USB Serial JTAG as well
+    // usb_serial_jtag_write_bytes(&c, 1, 0);
 }
 
 // Sense switches - return high byte of address bus (simple implementation)
@@ -246,6 +266,18 @@ static void setup_wifi(void)
                 if (mdns_name) {
                     printf("mDNS hostname: %s.local\n", mdns_name);
                 }
+
+                // Start WebSocket server for terminal access
+                printf("Starting WebSocket terminal server...\n");
+                websocket_console_init();
+                if (websocket_console_start_server()) {
+                    printf("WebSocket server started\n");
+                    printf("Terminal page: http://%s/\n", g_ip_address);
+                    g_websocket_enabled = true;
+                } else {
+                    printf("Failed to start WebSocket server\n");
+                }
+
                 return;  // Successfully connected
             }
 
@@ -484,7 +516,7 @@ void app_main(void)
     printf("WiFi setup complete, starting emulator...\n");
     g_emulator_can_start = true;
 
-    // Core 0 main loop - handle display updates and captive portal
+    // Core 0 main loop - handle display updates, WebSocket I/O, and captive portal
     for (;;) {
         // Check if emulator initialization failed
         if (g_init_failed) {
@@ -498,6 +530,8 @@ void app_main(void)
         if (captive_portal_is_running()) {
             captive_portal_poll();
         }
+
+        // WebSocket TX output is handled by a dedicated 20ms timer
         
         // Update front panel display (reads directly from CPU struct)
         altair_panel_update(&cpu);

@@ -1,10 +1,23 @@
 {
   "C_Cpp.default.compilerPath": "${env:HOME}/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
   "C_Cpp.default.includePath": [
-    "${workspaceFolder}/**",
-    "${env:HOME}/esp/esp-idf/components/**",
-    "${workspaceFolder}/build/config"
+    "${workspaceFolder}/Altair8800",
+    "${workspaceFolder}/main",
+    "${workspaceFolder}/FrontPanel",
+    "${workspaceFolder}/PortDrivers",
+    "${workspaceFolder}/captive_portal",
+    "${workspaceFolder}/drivers",
+    "${workspaceFolder}/terminal",
+    "${workspaceFolder}/build/config",
+    "${env:HOME}/esp/esp-idf/components/**"
   ],
+  "C_Cpp.files.exclude": {
+    "**/build": true,
+    "**/managed_components": true
+  },
+  "files.exclude": {
+    "**/build": true
+  },
   "C_Cpp.default.defines": [
     "ESP_PLATFORM",
     "IDF_VER=\"6.1\""

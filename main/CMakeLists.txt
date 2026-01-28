@@ -1,6 +1,8 @@
 idf_component_register(SRCS "main.c"
                              "config.c"
                              "wifi.c"
+                             "websocket_console.c"
+                             "websocket_server.c"
                              "../captive_portal/captive_portal.c"
                              "../PortDrivers/io_ports.c"
                              "../PortDrivers/time_io.c"
@@ -19,6 +21,7 @@ idf_component_register(SRCS "main.c"
                                     "../Disks"
                                     "../drivers/sdcard_esp32"
                                     "../captive_portal"
+                                    "../terminal"
                        REQUIRES fatfs 
                                 driver 
                                 esp_lcd 

@@ -16,3 +16,25 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # Increase default task stack size
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# Enable WebSocket support in HTTP server
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# LwIP socket pool - increase headroom for rapid reconnects and short-lived HTTP
+# Keep enough non-socket FD space for files/console by increasing FD_SETSIZE in CMake.
+CONFIG_LWIP_MAX_SOCKETS=48
+CONFIG_LWIP_MAX_ACTIVE_TCP=48
+CONFIG_LWIP_MAX_LISTENING_TCP=8
+
+# Aggressive socket recycling - minimize TIME_WAIT duration
+# TIME_WAIT = 2 * MSL, so 10ms MSL = 20ms TIME_WAIT (minimum practical)
+# This allows rapid WebSocket reconnects without exhausting socket pool
+CONFIG_LWIP_TCP_MSL=10
+CONFIG_LWIP_TCP_FIN_WAIT_TIMEOUT=20
+
+# Enable socket options for connection control
+CONFIG_LWIP_SO_REUSE=y
+CONFIG_LWIP_SO_REUSE_RXTOALL=y
+CONFIG_LWIP_SO_LINGER=y
+
+CONFIG_LWIP_TCP_MSS=1440

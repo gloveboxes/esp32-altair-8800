@@ -260,5 +260,5 @@ void altair_panel_update(const intel8080_t *cpu)
 //-----------------------------------------------------------------------------
 
 #define PANEL_TASK_STACK_SIZE   4096
-#define PANEL_TASK_PRIORITY     5
+#define PANEL_TASK_PRIORITY     6    // Above WS TX task (5) for responsive display
 #define PANEL_UPDATE_INTERVAL_MS 17  // ~60Hz
