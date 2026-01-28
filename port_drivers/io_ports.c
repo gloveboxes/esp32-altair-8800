@@ -5,9 +5,9 @@
  * Routes I/O port operations to appropriate drivers based on port number.
  */
 
-#include "PortDrivers/io_ports.h"
-#include "PortDrivers/time_io.h"
-#include "PortDrivers/utility_io.h"
+#include "port_drivers/io_ports.h"
+#include "port_drivers/time_io.h"
+#include "port_drivers/utility_io.h"
 
 #include <stdio.h>
 #include <string.h>

@@ -7,7 +7,7 @@
  * - Port 70: Version information string
  */
 
-#include "PortDrivers/utility_io.h"
+#include "port_drivers/utility_io.h"
 
 #include "esp_random.h"
 #include "esp_chip_info.h"

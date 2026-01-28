@@ -51,7 +51,7 @@
 #include "altair_panel.h"
 
 // I/O port handlers
-#include "PortDrivers/io_ports.h"
+#include "port_drivers/io_ports.h"
 
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
