@@ -243,14 +243,14 @@ wifi_result_t wifi_connect(void)
     if (password && password[0] != '\0') {
         strncpy((char*)wifi_config.sta.password, password, 
                 sizeof(wifi_config.sta.password) - 1);
-        // Support both WPA2 and WPA3 networks
-        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+        // WPA2-PSK as minimum threshold - accepts WPA2, WPA2/WPA3 transition, or WPA3
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     } else {
         // Open network
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     }
     
-    // WPA3 SAE settings (match ESP-IDF station example)
+    // WPA3 SAE settings (used when connecting to WPA3 networks)
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     wifi_config.sta.sae_h2e_identifier[0] = '\0';
 #ifdef CONFIG_ESP_WIFI_WPA3_COMPATIBLE_SUPPORT
