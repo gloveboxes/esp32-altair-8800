@@ -216,21 +216,27 @@ static volatile bool g_emulator_can_start = false;
  * @brief Check for config clear request during early boot
  *
  * Waits briefly for user to press 'C' to clear WiFi credentials
- * and enter captive portal mode.
+ * and enter captive portal mode. Press Enter to skip the wait.
  */
 static bool check_config_clear_request(void)
 {
     printf("\nWiFi credentials found in flash storage.\n");
     printf("Press 'C' within 5 seconds to clear config and enter AP mode...\n");
+    printf("Press Enter to skip wait and connect now.\n");
 
     int64_t start_time = esp_timer_get_time();
     while ((esp_timer_get_time() - start_time) < 5000000) {  // 5 seconds
         uint8_t c;
         int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
-        if (len > 0 && (c == 'c' || c == 'C')) {
-            printf("\nClearing WiFi configuration...\n");
-            config_clear();
-            return true;  // Config was cleared
+        if (len > 0) {
+            if (c == 'c' || c == 'C') {
+                printf("\nClearing WiFi configuration...\n");
+                config_clear();
+                return true;  // Config was cleared
+            } else if (c == '\r' || c == '\n') {
+                printf("\nSkipping wait...\n");
+                break;  // Skip remaining wait time
+            }
         }
     }
     printf("\n");
@@ -256,7 +262,7 @@ static void setup_wifi(void)
         } else {
             // Try to connect to stored network
             printf("Connecting to WiFi...\n");
-            wifi_result_t result = wifi_connect(15000);  // 15 second timeout
+            wifi_result_t result = wifi_connect();
 
             if (result == WIFI_RESULT_OK) {
                 g_wifi_connected = true;

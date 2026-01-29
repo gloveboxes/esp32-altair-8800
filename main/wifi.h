@@ -42,11 +42,11 @@ bool wifi_init(void);
  *
  * Attempts to connect to the WiFi network configured via config module.
  * This is a blocking call that waits for connection or timeout.
+ * Uses internal timeout suitable for WPA3-SAE networks.
  *
- * @param timeout_ms Maximum time to wait for connection (0 = default 15s)
  * @return WiFi result code
  */
-wifi_result_t wifi_connect(uint32_t timeout_ms);
+wifi_result_t wifi_connect(void);
 
 /**
  * @brief Disconnect from WiFi

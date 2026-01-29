@@ -29,11 +29,11 @@ static const char* TAG = "WiFi";
 #define WIFI_CONNECTED_BIT  BIT0
 #define WIFI_FAIL_BIT       BIT1
 
-// Default connection timeout
-#define DEFAULT_WIFI_TIMEOUT_MS  15000
+// Default connection timeout (WPA3-SAE can require multiple retries, DHCP needs time)
+#define DEFAULT_WIFI_TIMEOUT_MS  60000
 
 // Maximum connection retry attempts
-#define WIFI_MAX_RETRY  5
+#define WIFI_MAX_RETRY  10
 
 // State variables
 static bool s_wifi_initialized = false;
@@ -211,7 +211,7 @@ bool wifi_init(void)
     return true;
 }
 
-wifi_result_t wifi_connect(uint32_t timeout_ms)
+wifi_result_t wifi_connect(void)
 {
     if (!s_wifi_initialized) {
         ESP_LOGE(TAG, "WiFi not initialized");
@@ -243,7 +243,8 @@ wifi_result_t wifi_connect(uint32_t timeout_ms)
     if (password && password[0] != '\0') {
         strncpy((char*)wifi_config.sta.password, password, 
                 sizeof(wifi_config.sta.password) - 1);
-        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        // Support both WPA2 and WPA3 networks
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
     } else {
         // Open network
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
@@ -252,18 +253,19 @@ wifi_result_t wifi_connect(uint32_t timeout_ms)
     // WPA3 SAE settings (match ESP-IDF station example)
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     wifi_config.sta.sae_h2e_identifier[0] = '\0';
-
-    // Suppress noisy INFO-level driver messages during connect
-    esp_log_level_set("wifi", ESP_LOG_WARN);
+#ifdef CONFIG_ESP_WIFI_WPA3_COMPATIBLE_SUPPORT
+    wifi_config.sta.disable_wpa3_compatible_mode = 0;
+#endif
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Wait for connection or failure
-    if (timeout_ms == 0) {
-        timeout_ms = DEFAULT_WIFI_TIMEOUT_MS;
-    }
+    uint32_t timeout_ms = DEFAULT_WIFI_TIMEOUT_MS;
+
+    ESP_LOGI(TAG, "Waiting for connection (timeout: %lu ms, max retries: %d)...", 
+             (unsigned long)timeout_ms, WIFI_MAX_RETRY);
 
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group,
