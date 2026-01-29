@@ -92,7 +92,7 @@ bool config_get_device_id(char* buffer, size_t buffer_len);
 /**
  * @brief Get the mDNS hostname for this device
  *
- * Format: "altair-8800-XXXXXXXX" where XXXXXXXX is last 4 bytes of chip ID
+ * Format: "altair-XXXXXXXX" where XXXXXXXX is last 4 bytes of chip ID
  *
  * @return Pointer to hostname string (static buffer)
  */

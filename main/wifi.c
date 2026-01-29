@@ -367,9 +367,9 @@ bool wifi_start_ap(const char* ssid, const char* password)
         return false;
     }
 
-    // Stop any existing WiFi mode first (important for STA→AP transition)
+    // Stop any existing WiFi mode first
     esp_wifi_stop();
-    vTaskDelay(pdMS_TO_TICKS(100));  // Brief delay for clean transition
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP_LOGI(TAG, "Starting AP mode: SSID=%s", ssid);
 

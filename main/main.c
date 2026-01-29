@@ -290,6 +290,9 @@ static void setup_wifi(void)
 
     // Start captive portal for configuration
     if (captive_portal_start()) {
+        // Show setup screen on LCD
+        altair_panel_show_captive_portal(CAPTIVE_PORTAL_AP_SSID, captive_portal_get_ip());
+        
         printf("\n");
         printf("==============================================\n");
         printf("  WiFi Setup Mode\n");

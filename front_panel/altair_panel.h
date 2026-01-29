@@ -62,4 +62,15 @@ void altair_panel_update(const intel8080_t *cpu);
  */
 void altair_panel_show_ip(const char *ip_addr, const char *hostname);
 
+/**
+ * @brief Display captive portal setup screen
+ * 
+ * Clears the display and shows WiFi setup mode instructions.
+ * Call when entering captive portal / AP mode.
+ * 
+ * @param ap_ssid The AP SSID to connect to
+ * @param portal_ip The IP address of the config portal
+ */
+void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip);
+
 #endif // ALTAIR_PANEL_H

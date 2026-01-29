@@ -286,3 +286,34 @@ void altair_panel_show_ip(const char *ip_addr, const char *hostname)
     // Draw the string using small font (same as address labels), offset 4 pixels right
     ili9341_draw_string_small(4, Y_IP_ADDRESS, display_str, TEXT_GRAY, COLOR_BLACK);
 }
+
+void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip)
+{
+    if (!panel_initialized) {
+        return;
+    }
+    
+    // Clear entire screen
+    ili9341_fill_screen(COLOR_BLACK);
+    
+    // Draw border lines
+    ili9341_fill_rect(10, 50, 300, 2, COLOR_CYAN);
+    ili9341_fill_rect(10, 180, 300, 2, COLOR_CYAN);
+    
+    // Title - using small font, centered (6 pixels per char)
+    const char *title = "WIFI SETUP MODE";
+    int title_x = (LCD_H_RES - (strlen(title) * 6)) / 2;
+    ili9341_draw_string_small(title_x, 80, title, COLOR_CYAN, COLOR_BLACK);
+    
+    // Instructions using small font
+    char line1[48];
+    char line2[48];
+    snprintf(line1, sizeof(line1), "CONNECT TO: %s", ap_ssid ? ap_ssid : "Altair8800-Setup");
+    snprintf(line2, sizeof(line2), "THEN OPEN: HTTP://%s/", portal_ip ? portal_ip : "192.168.4.1");
+    
+    int line1_x = (LCD_H_RES - (strlen(line1) * 6)) / 2;
+    int line2_x = (LCD_H_RES - (strlen(line2) * 6)) / 2;
+    
+    ili9341_draw_string_small(line1_x, 110, line1, COLOR_WHITE, COLOR_BLACK);
+    ili9341_draw_string_small(line2_x, 140, line2, COLOR_WHITE, COLOR_BLACK);
+}
