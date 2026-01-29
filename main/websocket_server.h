@@ -46,7 +46,7 @@ void websocket_server_stop(void);
 bool websocket_server_is_running(void);
 
 /**
- * @brief Get number of connected WebSocket clients
+ * @brief Get number of connected WebSocket clients (0 or 1)
  *
  * @return 1 if connected, 0 if not
  */
@@ -62,7 +62,7 @@ uint32_t websocket_server_get_client_count(void);
 bool websocket_server_broadcast(const uint8_t* data, size_t len);
 
 /**
- * @brief Send PING to all clients for keepalive
+ * @brief Send PING to client for keepalive
  *
  * Used for connection liveness detection.
  */

@@ -156,7 +156,7 @@ static uint8_t process_ansi_sequence(uint8_t ch)
 // Checks WebSocket console first (if enabled), then USB Serial JTAG
 static uint8_t terminal_read(void)
 {
-    // Check WebSocket console first (if WiFi connected and clients present)
+    // Check WebSocket console first (if WiFi connected and client present)
     if (g_websocket_enabled) {
         uint8_t ws_ch;
         if (websocket_console_try_dequeue_input(&ws_ch)) {
@@ -175,12 +175,12 @@ static uint8_t terminal_read(void)
 }
 
 // Terminal write function
-// Sends to both WebSocket clients (if connected) and USB Serial JTAG
+// Sends to both WebSocket client (if connected) and USB Serial JTAG
 static void terminal_write(uint8_t c)
 {
     c &= ASCII_MASK_7BIT;  // Take first 7 bits only
 
-    // Send to WebSocket clients (if enabled)
+    // Send to WebSocket client (if enabled)
     if (g_websocket_enabled) {
         websocket_console_enqueue_output(c);
     }

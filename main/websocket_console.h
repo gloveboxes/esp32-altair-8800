@@ -4,6 +4,7 @@
  *
  * Provides cross-core communication between the WebSocket server (Core 0)
  * and the Altair emulator (Core 1) using FreeRTOS queues.
+ * Single-client model: only one WebSocket client at a time.
  */
 
 #ifndef WEBSOCKET_CONSOLE_H
@@ -41,24 +42,17 @@ bool websocket_console_start_server(void);
 void websocket_console_stop_server(void);
 
 /**
- * @brief Check if any WebSocket clients are connected
+ * @brief Check if a WebSocket client is connected
  *
- * @return true if at least one client is connected
+ * @return true if a client is connected
  */
 bool websocket_console_has_clients(void);
 
 /**
- * @brief Get number of connected WebSocket clients
- *
- * @return Number of active WebSocket connections
- */
-uint32_t websocket_console_get_client_count(void);
-
-/**
- * @brief Enqueue a byte for transmission to WebSocket clients
+ * @brief Enqueue a byte for transmission to WebSocket client
  *
  * Called from the emulator (Core 1) to send terminal output.
- * Non-blocking - drops data if no clients connected or queue full.
+ * Non-blocking - drops data if no client connected or queue full.
  *
  * @param value Byte to transmit
  */

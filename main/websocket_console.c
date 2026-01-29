@@ -22,8 +22,8 @@
 static const char* TAG = "WS_Console";
 
 // Queue depths - sized for burst terminal I/O (e.g., screen clears, listings)
-#define WS_RX_QUEUE_DEPTH   128    // Input from WebSocket clients
-#define WS_TX_QUEUE_DEPTH   4096   // Output to WebSocket clients - large for fast output
+#define WS_RX_QUEUE_DEPTH   128    // Input from WebSocket client
+#define WS_TX_QUEUE_DEPTH   4096   // Output to WebSocket client - large for fast output
 
 // Maximum bytes to batch in a single WebSocket send
 #define WS_TX_BATCH_SIZE    512
@@ -85,7 +85,7 @@ static void clear_rx_queue(void)
 }
 
 /**
- * @brief TX task - sends batched data to WebSocket clients
+ * @brief TX task - sends batched data to WebSocket client
  * 
  * Runs at lower priority than esp_timer to avoid starving system tasks.
  * Woken by timer or when queue has data.
@@ -103,7 +103,7 @@ static void tx_task(void* arg)
             continue;
         }
 
-        // Don't bother if no clients
+        // Don't bother if no client
         if (!websocket_console_has_clients()) {
             clear_tx_queue();
             continue;
@@ -305,18 +305,13 @@ bool websocket_console_has_clients(void)
     return websocket_server_get_client_count() > 0;
 }
 
-uint32_t websocket_console_get_client_count(void)
-{
-    return websocket_server_get_client_count();
-}
-
 void websocket_console_enqueue_output(uint8_t value)
 {
     if (!s_initialized || !s_tx_queue) {
         return;
     }
 
-    // If no clients connected, clear the queue to prevent accumulation
+    // If no client connected, clear the queue to prevent accumulation
     if (!websocket_console_has_clients()) {
         clear_tx_queue();
         return;
@@ -384,13 +379,8 @@ void websocket_console_handle_rx(const uint8_t* data, size_t len)
  */
 void websocket_console_on_connect(void)
 {
-    ESP_LOGI(TAG, "WebSocket client connected (total: %lu)",
-             websocket_server_get_client_count());
-    
-    // Clear any stale data when first client connects
-    if (websocket_server_get_client_count() == 1) {
-        clear_tx_queue();
-    }
+    // Clear any stale data when client connects
+    clear_tx_queue();
 }
 
 /**
@@ -398,11 +388,6 @@ void websocket_console_on_connect(void)
  */
 void websocket_console_on_disconnect(void)
 {
-    ESP_LOGI(TAG, "WebSocket client disconnected (remaining: %lu)",
-             websocket_server_get_client_count());
-
-    // Clear queues when last client disconnects
-    if (websocket_server_get_client_count() == 0) {
-        websocket_console_clear_queues();
-    }
+    // Clear queues when client disconnects
+    websocket_console_clear_queues();
 }

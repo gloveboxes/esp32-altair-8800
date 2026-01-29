@@ -36,3 +36,10 @@ idf_component_register(SRCS "main.c"
                                 esp_netif
                                 esp_event
                                 lwip)
+
+# Enable stricter warnings for app code only
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wunused-function
+    -Wunused-variable
+    -Wunused-but-set-variable
+)

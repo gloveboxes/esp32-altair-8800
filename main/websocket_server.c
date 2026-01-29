@@ -64,7 +64,6 @@ static esp_err_t ws_handler(httpd_req_t* req)
 
         // Kick existing client if any (new connection takes over)
         if (old_fd >= 0 && old_fd != new_fd) {
-            ESP_LOGI(TAG, "Kicking old client fd=%d for new fd=%d", old_fd, new_fd);
             s_client_fd = -1;  // Clear before triggering close
             httpd_sess_trigger_close(s_server, old_fd);
         }
@@ -72,7 +71,6 @@ static esp_err_t ws_handler(httpd_req_t* req)
         // Accept new client
         s_client_fd = new_fd;
         websocket_console_on_connect();
-        ESP_LOGI(TAG, "ws_connected: fd=%d", new_fd);
 
         // Set TCP_NODELAY for low latency
         int nodelay = 1;
