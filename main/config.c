@@ -107,7 +107,7 @@ bool config_init(void)
     uint8_t mac[6];
     esp_efuse_mac_get_default(mac);
     snprintf(s_mdns_hostname, sizeof(s_mdns_hostname), 
-             "altair-8800-%02x%02x%02x%02x", mac[2], mac[3], mac[4], mac[5]);
+             "altair-%02x%02x%02x%02x", mac[2], mac[3], mac[4], mac[5]);
 
     // Try to load existing config
     config_load();

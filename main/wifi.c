@@ -16,6 +16,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -121,6 +122,24 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 snprintf(s_ip_address, sizeof(s_ip_address), IPSTR,
                          IP2STR(&event->ip_info.ip));
                 ESP_LOGI(TAG, "Got IP address: %s", s_ip_address);
+                
+                // Disable WiFi power save for lowest latency
+                esp_wifi_set_ps(WIFI_PS_NONE);
+                
+                // Initialize mDNS service
+                const char* hostname = get_mdns_hostname();
+                if (hostname) {
+                    esp_err_t mdns_err = mdns_init();
+                    if (mdns_err == ESP_OK) {
+                        mdns_hostname_set(hostname);
+                        mdns_instance_name_set("Altair 8800 Emulator");
+                        // Advertise HTTP service
+                        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+                        ESP_LOGI(TAG, "mDNS initialized: %s.local", hostname);
+                    } else {
+                        ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
+                    }
+                }
                 
                 s_wifi_connected = true;
                 s_retry_count = 0;

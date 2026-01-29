@@ -34,6 +34,7 @@
 // Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
 #include "intel8080.h"
 #include "memory.h"
+#include "esp_heap_caps.h"
 
 // SD Card support
 #define SD_CARD_SUPPORT
@@ -485,6 +486,15 @@ void app_main(void)
     uint32_t flash_size;
     if (esp_flash_get_size(NULL, &flash_size) == ESP_OK) {
         printf("Flash size: %lu MB\n", flash_size / (1024 * 1024));
+    }
+    
+    // Memory stats
+    printf("\nMemory:\n");
+    printf("  Free heap:     %lu bytes\n", (unsigned long)esp_get_free_heap_size());
+    printf("  Min free heap: %lu bytes\n", (unsigned long)esp_get_minimum_free_heap_size());
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    if (psram_free > 0) {
+        printf("  PSRAM free:    %lu bytes\n", (unsigned long)psram_free);
     }
     printf("\n");
 

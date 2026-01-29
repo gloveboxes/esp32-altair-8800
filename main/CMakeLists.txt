@@ -35,7 +35,8 @@ idf_component_register(SRCS "main.c"
                                 esp_http_server
                                 esp_netif
                                 esp_event
-                                lwip)
+                                lwip
+                                mdns)
 
 # Enable stricter warnings for app code only
 target_compile_options(${COMPONENT_LIB} PRIVATE

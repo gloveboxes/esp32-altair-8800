@@ -14,7 +14,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/tcp.h>
 
 #include "lwip/sockets.h"
@@ -154,6 +156,11 @@ static esp_err_t socket_open_callback(httpd_handle_t hd, int sockfd)
     // SO_LINGER with zero timeout: RST on close, bypasses TIME_WAIT
     struct linger so_linger = { .l_onoff = 1, .l_linger = 0 };
     setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &so_linger, sizeof(so_linger));
+    
+    // Increase socket send buffer for high-throughput WebSocket
+    int sndbuf = 16384;
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+    
     return ESP_OK;
 }
 
@@ -191,8 +198,8 @@ bool websocket_server_start(void)
     config.lru_purge_enable = true;
     config.open_fn = socket_open_callback;
     config.close_fn = session_close_callback;
-    config.recv_wait_timeout = 5;
-    config.send_wait_timeout = 5;
+    config.recv_wait_timeout = 10;
+    config.send_wait_timeout = 10;   // Allow more time for congested links
     config.keep_alive_enable = false;
 
     ESP_LOGI(TAG, "Starting server on port %d", WEBSOCKET_SERVER_PORT);
@@ -260,14 +267,15 @@ bool websocket_server_broadcast(const uint8_t* data, size_t len)
         .len = len
     };
 
+    // Just try to send - if buffer is full, httpd will log a warning but
+    // we won't disconnect. Ping failures detect truly dead connections.
     esp_err_t ret = httpd_ws_send_frame_async(s_server, fd, &ws_pkt);
-    if (ret != ESP_OK) {
-        // Client gone, trigger cleanup
-        httpd_sess_trigger_close(s_server, fd);
-        return false;
-    }
-    return true;
+    return (ret == ESP_OK);
 }
+
+// Track consecutive ping failures to detect dead connections
+static int s_ping_failures = 0;
+#define MAX_PING_FAILURES 3
 
 void websocket_server_send_ping(void)
 {
@@ -286,6 +294,14 @@ void websocket_server_send_ping(void)
 
     esp_err_t ret = httpd_ws_send_frame_async(s_server, fd, &ping_pkt);
     if (ret != ESP_OK) {
-        httpd_sess_trigger_close(s_server, fd);
+        s_ping_failures++;
+        if (s_ping_failures >= MAX_PING_FAILURES) {
+            // Multiple ping failures - connection is truly dead
+            ESP_LOGW(TAG, "Connection dead after %d ping failures", s_ping_failures);
+            httpd_sess_trigger_close(s_server, fd);
+            s_ping_failures = 0;
+        }
+    } else {
+        s_ping_failures = 0;  // Reset on success
     }
 }
