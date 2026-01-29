@@ -234,22 +234,27 @@ wifi_result_t wifi_connect(uint32_t timeout_ms)
     s_wifi_connected = false;
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
 
-    // Configure station mode
-    wifi_config_t wifi_config = {
-        .sta = {
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
-        },
-    };
-
+    // Configure station mode - zero struct first to ensure clean state
+    wifi_config_t wifi_config;
+    memset(&wifi_config, 0, sizeof(wifi_config));
+    
+    // Copy credentials
     strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
     if (password && password[0] != '\0') {
         strncpy((char*)wifi_config.sta.password, password, 
                 sizeof(wifi_config.sta.password) - 1);
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     } else {
         // Open network
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     }
+    
+    // WPA3 SAE settings (match ESP-IDF station example)
+    wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    wifi_config.sta.sae_h2e_identifier[0] = '\0';
+
+    // Suppress noisy INFO-level driver messages during connect
+    esp_log_level_set("wifi", ESP_LOG_WARN);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
