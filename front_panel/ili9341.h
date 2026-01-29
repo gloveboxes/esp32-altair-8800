@@ -24,7 +24,7 @@
 #define LCD_H_RES       320
 #define LCD_V_RES       240
 #define LCD_SPI_HOST    SPI2_HOST
-#define LCD_PIXEL_CLK   (80 * 1000 * 1000)  // 80 MHz (ILI9341 max for writes)
+#define LCD_PIXEL_CLK   (60 * 1000 * 1000)  // 60 MHz (reduced from 80 for stability)
 
 // Color definitions (RGB565)
 #define COLOR_BLACK     0x0000

@@ -51,4 +51,15 @@ bool altair_panel_init(void);
  */
 void altair_panel_update(const intel8080_t *cpu);
 
+/**
+ * @brief Display IP address and hostname on the panel
+ * 
+ * Shows the IP address and mDNS hostname on the bottom left of the display.
+ * Call when IP address is obtained or changes.
+ * 
+ * @param ip_addr IP address string (e.g., "192.168.1.100")
+ * @param hostname mDNS hostname (without .local suffix), or NULL to omit
+ */
+void altair_panel_show_ip(const char *ip_addr, const char *hostname);
+
 #endif // ALTAIR_PANEL_H

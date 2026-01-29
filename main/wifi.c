@@ -17,6 +17,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "mdns.h"
+#include "altair_panel.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -122,6 +123,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 snprintf(s_ip_address, sizeof(s_ip_address), IPSTR,
                          IP2STR(&event->ip_info.ip));
                 ESP_LOGI(TAG, "Got IP address: %s", s_ip_address);
+                
+                // Show IP and hostname on front panel display
+                altair_panel_show_ip(s_ip_address, get_mdns_hostname());
                 
                 // Disable WiFi power save for lowest latency
                 esp_wifi_set_ps(WIFI_PS_NONE);

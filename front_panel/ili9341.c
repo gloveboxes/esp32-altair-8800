@@ -160,6 +160,11 @@ static const uint8_t font5x7[][5] = {
     {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
     {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
     {0x26, 0x49, 0x49, 0x49, 0x3E}, // 9
+    // Punctuation (index 36-39)
+    {0x00, 0x60, 0x60, 0x00, 0x00}, // . (period)
+    {0x00, 0x36, 0x36, 0x00, 0x00}, // : (colon)
+    {0x08, 0x08, 0x08, 0x08, 0x08}, // - (hyphen/minus)
+    {0x00, 0x00, 0x7F, 0x00, 0x00}, // | (vertical bar)
 };
 
 // DMA-capable buffers for pixel data - double buffered for async LED row drawing
@@ -601,6 +606,14 @@ void ili9341_draw_char_small(int x, int y, char c, uint16_t fg_color, uint16_t b
         glyph_idx = c - 'a';  // lowercase maps to uppercase
     else if (c >= '0' && c <= '9')
         glyph_idx = 26 + (c - '0');
+    else if (c == '.')
+        glyph_idx = 36;
+    else if (c == ':')
+        glyph_idx = 37;
+    else if (c == '-')
+        glyph_idx = 38;
+    else if (c == '|')
+        glyph_idx = 39;
     else if (c == ' ')
         return;  // Space - just skip (caller advances x)
     else

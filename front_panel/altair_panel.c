@@ -262,3 +262,27 @@ void altair_panel_update(const intel8080_t *cpu)
 #define PANEL_TASK_STACK_SIZE   4096
 #define PANEL_TASK_PRIORITY     6    // Above WS TX task (5) for responsive display
 #define PANEL_UPDATE_INTERVAL_MS 17  // ~60Hz
+
+// Y position for IP address (bottom of display)
+#define Y_IP_ADDRESS    225
+
+void altair_panel_show_ip(const char *ip_addr, const char *hostname)
+{
+    if (!panel_initialized || ip_addr == NULL) {
+        return;
+    }
+    
+    // Clear the entire bottom line
+    ili9341_fill_rect(0, Y_IP_ADDRESS, LCD_H_RES, 15, COLOR_BLACK);
+    
+    // Build display string: "WIFI: IP | hostname.local"
+    char display_str[72];
+    if (hostname) {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s | %s.local", ip_addr, hostname);
+    } else {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s", ip_addr);
+    }
+    
+    // Draw the string using small font (same as address labels), offset 4 pixels right
+    ili9341_draw_string_small(4, Y_IP_ADDRESS, display_str, TEXT_GRAY, COLOR_BLACK);
+}
