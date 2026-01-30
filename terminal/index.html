@@ -309,7 +309,6 @@
         reconnectTimer: null,
         connectTimeout: null,
         userInitiatedDisconnect: false,
-        lastButtonClick: 0,  // Rate limit connect/disconnect button
         inputBuffer: [],
         inputTimer: null,
         encoder: new TextEncoder()
@@ -329,8 +328,7 @@
         MAX_SCROLLBACK_LINES: 1000,
         BUFFER_CLEANUP_INTERVAL: 300000, // 5 minutes
         RECONNECT_DELAY: 2000,
-        CONNECTION_TIMEOUT: 5000,  // 5 second connection timeout
-        BUTTON_COOLDOWN: 1000  // 1 second cooldown between connect/disconnect clicks
+        CONNECTION_TIMEOUT: 5000  // 5 second connection timeout
       };
 
       // DOM element cache
@@ -513,14 +511,6 @@
       function setupReconnectButton() {
         if (!elements.reconnectBtn) return;
         elements.reconnectBtn.onclick = function () {
-          // Rate limit: prevent rapid clicking from exhausting socket pool
-          const now = Date.now();
-          if (now - state.lastButtonClick < CONFIG.BUTTON_COOLDOWN) {
-            console.log("Button cooldown - ignoring click");
-            return;
-          }
-          state.lastButtonClick = now;
-
           if (state.connected && state.ws && state.ws.readyState === WebSocket.OPEN) {
             // Disconnect
             state.userInitiatedDisconnect = true;

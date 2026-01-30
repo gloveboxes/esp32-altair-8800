@@ -536,6 +536,7 @@ void app_main(void)
     g_emulator_can_start = true;
 
     // Core 0 main loop - handle display updates, WebSocket I/O, and captive portal
+    TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
         // Check if emulator initialization failed
         if (g_init_failed) {
@@ -555,7 +556,7 @@ void app_main(void)
         // Update front panel display (reads directly from CPU struct)
         altair_panel_update(&cpu);
         
-        // Update at ~60Hz
-        vTaskDelay(pdMS_TO_TICKS(17));
+        // Update at ~30Hz (keep cadence steady under load)
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
     }
 }

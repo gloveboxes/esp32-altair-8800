@@ -13,7 +13,6 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
-#include "esp_heap_caps.h"
 
 static const char *TAG = "ILI9341";
 
@@ -168,11 +167,14 @@ static const uint8_t font5x7[][5] = {
     {0x20, 0x10, 0x08, 0x04, 0x02}, // / (forward slash)
 };
 
+// DMA buffer size: full width x max LED height
+#define DMA_BUFFER_SIZE (LCD_H_RES * 16)
+
 // DMA-capable buffers for pixel data - double buffered for async LED row drawing
-// Each buffer sized for full LED row block (320 x 15 = 4800 pixels)
-static uint16_t *dma_buffers[2] = {NULL, NULL};
+// Each buffer sized for full LED row block (320 x 16 = 5120 pixels)
+// Statically allocated with DMA_ATTR since they're used continuously at ms rate
+DMA_ATTR static uint16_t dma_buffers[2][DMA_BUFFER_SIZE];
 static int active_buffer = 0;  // Which buffer to fill next
-#define DMA_BUFFER_SIZE (LCD_H_RES * 16)  // Full width x max LED height
 
 // Legacy aliases for other functions
 #define dma_buffer dma_buffers[0]
@@ -235,8 +237,10 @@ static void lcd_write_pixels_async(const uint16_t *data, size_t pixel_count)
     lcd_wait_async();  // Wait for previous transfer
     
     gpio_set_level(LCD_PIN_DC, 1);
-    memset(&async_trans, 0, sizeof(async_trans));
+    // async_trans is static (zero-initialized), only set fields we use
+    // rxlength must be 0 for TX-only transfers (no receive)
     async_trans.length = pixel_count * 16;
+    async_trans.rxlength = 0;
     async_trans.tx_buffer = data;
     
     spi_device_queue_trans(spi_handle, &async_trans, portMAX_DELAY);
@@ -259,15 +263,7 @@ static void lcd_write_pixels(const uint16_t *data, size_t pixel_count)
 esp_err_t ili9341_init(void)
 {
     ESP_LOGI(TAG, "Initializing ILI9341 display (FNK0104B board)");
-
-    // Allocate DMA-capable buffers - both full size for double-buffered LED rows
-    dma_buffers[0] = heap_caps_malloc(DMA_BUFFER_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA);
-    dma_buffers[1] = heap_caps_malloc(DMA_BUFFER_SIZE * sizeof(uint16_t), MALLOC_CAP_DMA);
-    if (!dma_buffers[0] || !dma_buffers[1]) {
-        ESP_LOGE(TAG, "Failed to allocate DMA buffers");
-        return ESP_ERR_NO_MEM;
-    }
-    ESP_LOGI(TAG, "Allocated DMA buffers (%d + %d bytes)", DMA_BUFFER_SIZE * 2, LCD_H_RES * 2);
+    ESP_LOGI(TAG, "Using static DMA buffers (%d bytes each)", DMA_BUFFER_SIZE * sizeof(uint16_t));
 
     // Configure GPIO pins (DC and backlight)
     gpio_config_t io_conf = {
@@ -658,66 +654,80 @@ void ili9341_draw_string_small(int x, int y, const char *str, uint16_t fg_color,
     }
 }
 
-// Draw a row of LEDs efficiently using async DMA with double buffering
-// Builds block in inactive buffer while previous transfer completes
-void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
-                          int led_size, int spacing, uint16_t on_color, uint16_t off_color)
+// Draw a contiguous span of LEDs efficiently using async DMA with double buffering
+// LEDs are indexed with MSB on the left (highest bit index first)
+void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
+                           int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                           int left_index, int right_index)
 {
-    // Calculate total width of the row
-    int total_width = (num_leds - 1) * spacing + led_size;
-    
+    if (num_leds <= 0 || led_size <= 0 || spacing <= 0) return;
+    if (left_index < right_index) return;
+    if (left_index >= num_leds) left_index = num_leds - 1;
+    if (right_index < 0) right_index = 0;
+
+    int span_leds = left_index - right_index + 1;
+    int total_width = (span_leds - 1) * spacing + led_size;
+    int span_x = x_start + (num_leds - 1 - left_index) * spacing;
+
     // Bounds check
-    if (x_start < 0 || y < 0 || x_start + total_width > LCD_H_RES || y + led_size > LCD_V_RES)
+    if (span_x < 0 || y < 0 || span_x + total_width > LCD_H_RES || y + led_size > LCD_V_RES)
         return;
-    
+
     // Byte swap colors for SPI
     uint16_t on_swap = (on_color >> 8) | (on_color << 8);
     uint16_t off_swap = (off_color >> 8) | (off_color << 8);
     uint16_t bg_swap = 0;  // Black background between LEDs
-    
+
     // Get the buffer we'll fill (not the one currently being transmitted)
     uint16_t *buf = dma_buffers[active_buffer];
-    
-    // Build the entire LED row block directly in DMA buffer
-    // LEDs are drawn MSB on left (highest bit index first)
+
+    // Build the LED span block directly in DMA buffer
     int scanline_width = 0;
-    
-    // Build first scanline
-    for (int led = num_leds - 1; led >= 0; led--) {
+    int gap = spacing - led_size;
+    if (gap < 0) gap = 0;
+
+    for (int led = left_index; led >= right_index; led--) {
         uint16_t led_color = (bits >> led) & 1 ? on_swap : off_swap;
-        
-        // LED pixels
+
         for (int px = 0; px < led_size; px++) {
             buf[scanline_width++] = led_color;
         }
-        
-        // Gap pixels (except after last LED)
-        if (led > 0) {
-            int gap = spacing - led_size;
+
+        if (led > right_index) {
             for (int px = 0; px < gap; px++) {
                 buf[scanline_width++] = bg_swap;
             }
         }
     }
-    
+
+    int total_pixels = scanline_width * led_size;
+    if (total_pixels > DMA_BUFFER_SIZE) return;
+
     // Replicate first scanline for remaining rows (use memcpy for speed)
     for (int row = 1; row < led_size; row++) {
         memcpy(buf + row * scanline_width, buf, scanline_width * sizeof(uint16_t));
     }
-    
-    int total_pixels = scanline_width * led_size;
-    
+
     // Wait for any previous async transfer to complete before setting new window
     lcd_wait_async();
-    
-    // Set window for entire LED row block
-    ili9341_set_window(x_start, y, x_start + total_width - 1, y + led_size - 1);
-    
+
+    // Set window for the LED span block
+    ili9341_set_window(span_x, y, span_x + scanline_width - 1, y + led_size - 1);
+
     // Start async DMA transfer
     lcd_write_pixels_async(buf, total_pixels);
-    
+
     // Switch to other buffer for next call
     active_buffer = 1 - active_buffer;
+}
+
+// Draw a full row of LEDs using async DMA
+void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
+                          int led_size, int spacing, uint16_t on_color, uint16_t off_color)
+{
+    ili9341_draw_led_span(bits, num_leds, x_start, y,
+                          led_size, spacing, on_color, off_color,
+                          num_leds - 1, 0);
 }
 
 // Wait for any pending LED row DMA transfer to complete

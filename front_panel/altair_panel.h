@@ -30,6 +30,9 @@
 // Panel API
 //-----------------------------------------------------------------------------
 
+// Recommended display update cadence (Core 0 main loop)
+#define PANEL_UPDATE_INTERVAL_MS 33  // ~30Hz
+
 /**
  * @brief Initialize the front panel display
  * 
@@ -44,7 +47,7 @@ bool altair_panel_init(void);
  * @brief Update the front panel display
  * 
  * Reads CPU state and updates the display.
- * Call this periodically from Core 0 main loop (~60Hz recommended).
+ * Call this periodically from Core 0 main loop (~30Hz recommended).
  * Only redraws LEDs that have changed state for efficiency.
  * 
  * @param cpu Pointer to the Intel 8080 CPU struct

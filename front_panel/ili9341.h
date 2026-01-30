@@ -125,6 +125,24 @@ void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
                           int led_size, int spacing, uint16_t on_color, uint16_t off_color);
 
 /**
+ * @brief Draw a contiguous span of LEDs using async DMA
+ * LEDs are indexed with MSB on the left (highest bit index first)
+ * @param bits Bit pattern for LED states (bit 0 = rightmost LED)
+ * @param num_leds Number of LEDs in the row
+ * @param x_start Starting X position of the full row
+ * @param y Y position
+ * @param led_size Size of each LED (square)
+ * @param spacing Distance between LED left edges
+ * @param on_color Color for ON state
+ * @param off_color Color for OFF state
+ * @param left_index Leftmost LED index to draw (MSB side)
+ * @param right_index Rightmost LED index to draw (LSB side)
+ */
+void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
+                           int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                           int left_index, int right_index);
+
+/**
  * @brief Wait for any pending async DMA transfer to complete
  * Call after drawing LED rows to ensure all transfers are done
  */

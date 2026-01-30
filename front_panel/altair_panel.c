@@ -3,7 +3,7 @@
  * @brief Altair 8800 Front Panel Display for ESP32-S3
  * 
  * Displays CPU state on ILI9341 LCD using direct-write (no framebuffer).
- * Display updates run on Core 0 at ~60Hz refresh rate.
+ * Display updates run on Core 0 at ~30Hz refresh rate.
  * Only redraws LEDs that have changed state for efficiency.
  */
 
@@ -53,6 +53,26 @@ static bool panel_initialized = false;
 //-----------------------------------------------------------------------------
 // Panel drawing functions
 //-----------------------------------------------------------------------------
+
+static bool update_led_row_span(uint32_t new_bits, uint32_t old_bits, int num_leds,
+                                int x_start, int y, int spacing)
+{
+    uint32_t mask = (num_leds >= 32) ? 0xFFFFFFFFu : ((1u << num_leds) - 1u);
+    new_bits &= mask;
+    uint32_t changed = (new_bits ^ old_bits) & mask;
+    if (!changed) return false;
+
+    int left = 31 - __builtin_clz(changed);
+    int right = __builtin_ctz(changed);
+
+    if (left >= num_leds) left = num_leds - 1;
+    if (right < 0) right = 0;
+
+    ili9341_draw_led_span(new_bits, num_leds, x_start, y,
+                          LED_SIZE, spacing, LED_ON_COLOR, LED_OFF_COLOR,
+                          left, right);
+    return true;
+}
 
 /**
  * @brief Draw static panel elements (labels, lines) - called once at init
@@ -130,76 +150,20 @@ static void draw_all_leds(uint16_t status, uint16_t address, uint8_t data)
 
 /**
  * @brief Update only changed LED rows using async DMA with double buffering
- * Redraws entire row if any LED in that row changed
+ * Redraws the minimal contiguous LED span per row that covers all changes
  */
 static void update_changed_leds(uint16_t new_status, uint16_t old_status,
                                  uint16_t new_address, uint16_t old_address,
                                  uint8_t new_data, uint8_t old_data)
 {
-    // Detect which individual LEDs changed
-    uint16_t status_changed = new_status ^ old_status;
-    uint16_t address_changed = new_address ^ old_address;
-    uint8_t data_changed = new_data ^ old_data;
-    
-    // Count total changed LEDs
-    int num_changed = __builtin_popcount(status_changed) + 
-                      __builtin_popcount(address_changed) + 
-                      __builtin_popcount(data_changed);
-    
-    if (num_changed == 0) return;
-    
-    // If many LEDs changed, use row-based drawing (more efficient for bulk updates)
-    // Threshold: if more than ~6 LEDs changed, row drawing is faster
-    if (num_changed > 6) {
-        // Row-based update
-        if (status_changed) {
-            ili9341_draw_led_row(new_status, 10, X_STATUS_START, Y_STATUS,
-                                 LED_SIZE, LED_SPACING_STATUS, LED_ON_COLOR, LED_OFF_COLOR);
-        }
-        if (address_changed) {
-            ili9341_draw_led_row(new_address, 16, X_ADDRESS_START, Y_ADDRESS,
-                                 LED_SIZE, LED_SPACING_ADDRESS, LED_ON_COLOR, LED_OFF_COLOR);
-        }
-        if (data_changed) {
-            ili9341_draw_led_row(new_data, 8, X_DATA_START, Y_DATA,
-                                 LED_SIZE, LED_SPACING_DATA, LED_ON_COLOR, LED_OFF_COLOR);
-        }
+    bool any_updated = false;
+
+    any_updated |= update_led_row_span(new_status, old_status, 10, X_STATUS_START, Y_STATUS, LED_SPACING_STATUS);
+    any_updated |= update_led_row_span(new_address, old_address, 16, X_ADDRESS_START, Y_ADDRESS, LED_SPACING_ADDRESS);
+    any_updated |= update_led_row_span(new_data, old_data, 8, X_DATA_START, Y_DATA, LED_SPACING_DATA);
+
+    if (any_updated) {
         ili9341_wait_async();
-        return;
-    }
-    
-    // Per-LED update - only redraw LEDs that actually changed
-    // Status LEDs (10 LEDs, MSB on left)
-    if (status_changed) {
-        for (int i = 9; i >= 0; i--) {
-            if (status_changed & (1 << i)) {
-                int x = X_STATUS_START + (9 - i) * LED_SPACING_STATUS;
-                uint16_t color = (new_status & (1 << i)) ? LED_ON_COLOR : LED_OFF_COLOR;
-                ili9341_fill_rect(x, Y_STATUS, LED_SIZE, LED_SIZE, color);
-            }
-        }
-    }
-    
-    // Address LEDs (16 LEDs, MSB on left)
-    if (address_changed) {
-        for (int i = 15; i >= 0; i--) {
-            if (address_changed & (1 << i)) {
-                int x = X_ADDRESS_START + (15 - i) * LED_SPACING_ADDRESS;
-                uint16_t color = (new_address & (1 << i)) ? LED_ON_COLOR : LED_OFF_COLOR;
-                ili9341_fill_rect(x, Y_ADDRESS, LED_SIZE, LED_SIZE, color);
-            }
-        }
-    }
-    
-    // Data LEDs (8 LEDs, MSB on left)
-    if (data_changed) {
-        for (int i = 7; i >= 0; i--) {
-            if (data_changed & (1 << i)) {
-                int x = X_DATA_START + (7 - i) * LED_SPACING_DATA;
-                uint16_t color = (new_data & (1 << i)) ? LED_ON_COLOR : LED_OFF_COLOR;
-                ili9341_fill_rect(x, Y_DATA, LED_SIZE, LED_SIZE, color);
-            }
-        }
     }
 }
 
@@ -261,8 +225,6 @@ void altair_panel_update(const intel8080_t *cpu)
 
 #define PANEL_TASK_STACK_SIZE   4096
 #define PANEL_TASK_PRIORITY     6    // Above WS TX task (5) for responsive display
-#define PANEL_UPDATE_INTERVAL_MS 17  // ~60Hz
-
 // Y position for IP address (bottom of display)
 #define Y_IP_ADDRESS    225
 
