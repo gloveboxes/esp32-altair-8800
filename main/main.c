@@ -202,11 +202,26 @@ static uint8_t sense(void)
 #define EMULATOR_TASK_STACK_SIZE  8192
 #define EMULATOR_TASK_PRIORITY    10    // High priority for consistent timing
 
+// Panel update task (runs on Core 0)
+#define PANEL_UPDATE_TASK_STACK_SIZE  4096
+#define PANEL_UPDATE_TASK_PRIORITY    5
+
 // Flag to signal initialization status
 static volatile bool g_init_failed = false;
 
 // Flag to signal emulator should start (after WiFi setup)
 static volatile bool g_emulator_can_start = false;
+
+// Main task handle for notifications
+static TaskHandle_t s_main_task = NULL;
+
+static void signal_init_failed(void)
+{
+    g_init_failed = true;
+    if (s_main_task) {
+        xTaskNotifyGive(s_main_task);
+    }
+}
 
 //-----------------------------------------------------------------------------
 // WiFi Setup
@@ -321,6 +336,20 @@ static void setup_wifi(void)
 // Emulator Task (runs on Core 1)
 //-----------------------------------------------------------------------------
 
+// Panel update task (runs on Core 0)
+static void panel_update_task(void *pvParameters)
+{
+    (void)pvParameters;
+
+    TickType_t last_wake = xTaskGetTickCount();
+    for (;;) {
+        if (!g_init_failed) {
+            altair_panel_update(&cpu);
+        }
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
+    }
+}
+
 static void emulator_task(void *pvParameters)
 {
     (void)pvParameters;
@@ -346,7 +375,7 @@ static void emulator_task(void *pvParameters)
         printf("  - No SD card inserted\n");
         printf("  - SD card not formatted as FAT32\n");
         printf("  - Incorrect wiring\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -366,7 +395,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_A: %s\n", DISK_A_PATH);
     if (!esp32_sd_disk_load(0, DISK_A_PATH)) {
         printf("  DISK_A load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -375,7 +404,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_B: %s\n", DISK_B_PATH);
     if (!esp32_sd_disk_load(1, DISK_B_PATH)) {
         printf("  DISK_B load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -384,7 +413,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_C: %s\n", DISK_C_PATH);
     if (!esp32_sd_disk_load(2, DISK_C_PATH)) {
         printf("  DISK_C load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -393,7 +422,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_D: %s\n", DISK_D_PATH);
     if (!esp32_sd_disk_load(3, DISK_D_PATH)) {
         printf("  DISK_D load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -417,7 +446,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
     if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len)) {
         printf("  DISK_A load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -427,7 +456,7 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
     if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len)) {
         printf("  DISK_B load failed!\n");
-        g_init_failed = true;
+        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -469,6 +498,8 @@ static void emulator_task(void *pvParameters)
 
 void app_main(void)
 {
+    s_main_task = xTaskGetCurrentTaskHandle();
+
     // Initialize USB Serial JTAG driver for non-blocking terminal I/O
     usb_serial_jtag_driver_config_t usb_config = {
         .rx_buffer_size = 128,   // Single-char input, just need small queue
@@ -514,6 +545,17 @@ void app_main(void)
     // Initialize front panel display on Core 0
     printf("Initializing front panel display on Core 0...\n");
     altair_panel_init();
+
+    // Start panel update task on Core 0
+    xTaskCreatePinnedToCore(
+        panel_update_task,
+        "panel_update",
+        PANEL_UPDATE_TASK_STACK_SIZE,
+        NULL,
+        PANEL_UPDATE_TASK_PRIORITY,
+        NULL,
+        0  // Pin to Core 0
+    );
     
     // Start emulator task on Core 1 (will wait for WiFi setup)
     printf("Starting emulator task on Core 1...\n");
@@ -535,28 +577,15 @@ void app_main(void)
     printf("WiFi setup complete, starting emulator...\n");
     g_emulator_can_start = true;
 
-    // Core 0 main loop - handle display updates, WebSocket I/O, and captive portal
-    TickType_t last_wake = xTaskGetTickCount();
+    // Core 0 main loop - idle until notified of failure
     for (;;) {
-        // Check if emulator initialization failed
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
         if (g_init_failed) {
             printf("Emulator initialization failed. Halting.\n");
             for (;;) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
         }
-        
-        // Poll captive portal if running (handles reboot after config save)
-        if (captive_portal_is_running()) {
-            captive_portal_poll();
-        }
-
-        // WebSocket TX output is handled by a dedicated 20ms timer
-        
-        // Update front panel display (reads directly from CPU struct)
-        altair_panel_update(&cpu);
-        
-        // Update at ~30Hz (keep cadence steady under load)
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
     }
 }

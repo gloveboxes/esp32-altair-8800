@@ -37,7 +37,7 @@ static const char* TAG = "WS_Console";
 
 // TX task stack size and priority (lower than esp_timer to avoid starving system)
 #define WS_TX_TASK_STACK    4096
-#define WS_TX_TASK_PRIORITY 5      // Lower than default (esp_timer is 22)
+#define WS_TX_TASK_PRIORITY 6      // Lower than default (esp_timer is 22)
 
 // FreeRTOS queues for cross-core communication
 static QueueHandle_t s_rx_queue = NULL;  // WebSocket -> Emulator
