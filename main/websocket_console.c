@@ -38,6 +38,7 @@ static const char* TAG = "WS_Console";
 // TX task stack size and priority (lower than esp_timer to avoid starving system)
 #define WS_TX_TASK_STACK    4096
 #define WS_TX_TASK_PRIORITY 6      // Lower than default (esp_timer is 22)
+#define WS_TX_TASK_CORE     0      // Pin to Core 0 to avoid emulator core
 
 // FreeRTOS queues for cross-core communication
 static QueueHandle_t s_rx_queue = NULL;  // WebSocket -> Emulator
@@ -57,6 +58,9 @@ static esp_timer_handle_t s_ping_timer = NULL;
 
 // Initialization flag
 static bool s_initialized = false;
+
+// Flag to signal TX task to send a ping (set by timer, cleared by TX task)
+static volatile bool s_ping_pending = false;
 
 /**
  * @brief Clear the TX queue
@@ -106,7 +110,15 @@ static void tx_task(void* arg)
         // Don't bother if no client
         if (!websocket_console_has_clients()) {
             clear_tx_queue();
+            s_ping_pending = false;
             continue;
+        }
+
+        // Send ping if requested (from timer callback)
+        // Do this from TX task to avoid racing with data sends
+        if (s_ping_pending) {
+            s_ping_pending = false;
+            websocket_server_send_ping();
         }
 
         // Batch output for efficiency
@@ -144,6 +156,8 @@ static void tx_timer_callback(void* arg)
 
 /**
  * @brief Timer callback for WebSocket keepalive pings
+ * 
+ * Sets flag and wakes TX task to send ping (avoids racing with data sends).
  */
 static void ping_timer_callback(void* arg)
 {
@@ -154,7 +168,10 @@ static void ping_timer_callback(void* arg)
     }
 
     if (websocket_console_has_clients()) {
-        websocket_server_send_ping();
+        s_ping_pending = true;
+        if (s_tx_sem) {
+            xSemaphoreGive(s_tx_sem);  // Wake TX task to send ping
+        }
     }
 }
 
@@ -189,8 +206,9 @@ void websocket_console_init(void)
     }
 
     // Create TX task at lower priority than esp_timer
-    BaseType_t ret = xTaskCreate(tx_task, "ws_tx", WS_TX_TASK_STACK, NULL,
-                                  WS_TX_TASK_PRIORITY, &s_tx_task);
+    BaseType_t ret = xTaskCreatePinnedToCore(tx_task, "ws_tx", WS_TX_TASK_STACK, NULL,
+                                             WS_TX_TASK_PRIORITY, &s_tx_task,
+                                             WS_TX_TASK_CORE);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create TX task");
         vSemaphoreDelete(s_tx_sem);

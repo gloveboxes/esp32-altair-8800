@@ -17,6 +17,7 @@
  */
 
 #include <stdio.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_chip_info.h"
@@ -66,7 +67,13 @@ static bool g_wifi_connected = false;
 static char g_ip_address[16] = {0};
 
 // WebSocket console enable flag (set when WiFi connects)
-static volatile bool g_websocket_enabled = false;
+// Using atomic for cross-core visibility (read by Core 1, written by Core 0)
+static atomic_bool g_websocket_enabled = false;
+
+// Cached copy of g_websocket_enabled for hot path (set once after task notification)
+// Safe because: 1) Set before emulator starts, 2) Never changes after that,
+// 3) Task notification provides memory barrier ensuring visibility
+static bool s_ws_enabled_cached = false;
 
 // Process character through ANSI escape sequence state machine
 static uint8_t process_ansi_sequence(uint8_t ch)
@@ -158,7 +165,8 @@ static uint8_t process_ansi_sequence(uint8_t ch)
 static uint8_t terminal_read(void)
 {
     // Check WebSocket console first (if WiFi connected and client present)
-    if (g_websocket_enabled) {
+    // Uses cached value to avoid atomic_load overhead in hot path
+    if (s_ws_enabled_cached) {
         uint8_t ws_ch;
         if (websocket_console_try_dequeue_input(&ws_ch)) {
             return (uint8_t)(ws_ch & ASCII_MASK_7BIT);
@@ -182,7 +190,8 @@ static void terminal_write(uint8_t c)
     c &= ASCII_MASK_7BIT;  // Take first 7 bits only
 
     // Send to WebSocket client (if enabled)
-    if (g_websocket_enabled) {
+    // Uses cached value to avoid atomic_load overhead in hot path
+    if (s_ws_enabled_cached) {
         websocket_console_enqueue_output(c);
     }
 
@@ -204,20 +213,21 @@ static uint8_t sense(void)
 
 // Panel update task (runs on Core 0)
 #define PANEL_UPDATE_TASK_STACK_SIZE  4096
-#define PANEL_UPDATE_TASK_PRIORITY    5
+#define PANEL_UPDATE_TASK_PRIORITY    4
 
 // Flag to signal initialization status
-static volatile bool g_init_failed = false;
-
-// Flag to signal emulator should start (after WiFi setup)
-static volatile bool g_emulator_can_start = false;
+// Using atomic for cross-core visibility
+static atomic_bool g_init_failed = false;
 
 // Main task handle for notifications
 static TaskHandle_t s_main_task = NULL;
 
+// Emulator task handle for startup notification
+static TaskHandle_t s_emulator_task = NULL;
+
 static void signal_init_failed(void)
 {
-    g_init_failed = true;
+    atomic_store(&g_init_failed, true);
     if (s_main_task) {
         xTaskNotifyGive(s_main_task);
     }
@@ -295,7 +305,7 @@ static void setup_wifi(void)
                 if (websocket_console_start_server()) {
                     printf("WebSocket server started\n");
                     printf("Terminal page: http://%s/\n", g_ip_address);
-                    g_websocket_enabled = true;
+                    atomic_store(&g_websocket_enabled, true);
                 } else {
                     printf("Failed to start WebSocket server\n");
                 }
@@ -343,8 +353,12 @@ static void panel_update_task(void *pvParameters)
 
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
-        if (!g_init_failed) {
+        if (!atomic_load(&g_init_failed)) {
             altair_panel_update(&cpu);
+        }
+        // If we overran the period, reset to avoid "catch-up" bursts.
+        if ((xTaskGetTickCount() - last_wake) > pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS)) {
+            last_wake = xTaskGetTickCount();
         }
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
     }
@@ -356,9 +370,13 @@ static void emulator_task(void *pvParameters)
 
     // Wait for WiFi setup to complete before starting emulator
     printf("Emulator task waiting for WiFi setup...\n");
-    while (!g_emulator_can_start) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    
+    // Cache websocket enabled state for hot path - safe because:
+    // 1) g_websocket_enabled is set before this notification
+    // 2) Task notification includes memory barrier ensuring visibility
+    // 3) Value never changes after emulator starts
+    s_ws_enabled_cached = atomic_load(&g_websocket_enabled);
     
     printf("Emulator task started on Core %d\n", xPortGetCoreID());
 
@@ -565,7 +583,7 @@ void app_main(void)
         EMULATOR_TASK_STACK_SIZE,
         NULL,
         EMULATOR_TASK_PRIORITY,
-        NULL,
+        &s_emulator_task,
         1  // Pin to Core 1
     );
 
@@ -573,15 +591,17 @@ void app_main(void)
     // This blocks until WiFi is connected or captive portal exits
     setup_wifi();
 
-    // Signal emulator to start
+    // Signal emulator to start using task notification
     printf("WiFi setup complete, starting emulator...\n");
-    g_emulator_can_start = true;
+    if (s_emulator_task) {
+        xTaskNotifyGive(s_emulator_task);
+    }
 
     // Core 0 main loop - idle until notified of failure
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (g_init_failed) {
+        if (atomic_load(&g_init_failed)) {
             printf("Emulator initialization failed. Halting.\n");
             for (;;) {
                 vTaskDelay(pdMS_TO_TICKS(1000));

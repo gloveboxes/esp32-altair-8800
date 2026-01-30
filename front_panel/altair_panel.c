@@ -224,7 +224,7 @@ void altair_panel_update(const intel8080_t *cpu)
 //-----------------------------------------------------------------------------
 
 #define PANEL_TASK_STACK_SIZE   4096
-#define PANEL_TASK_PRIORITY     5    // Legacy value (panel update task is created in main)
+#define PANEL_TASK_PRIORITY     4    // Legacy value (panel update task is created in main)
 // Y position for IP address (bottom of display)
 #define Y_IP_ADDRESS    225
 
