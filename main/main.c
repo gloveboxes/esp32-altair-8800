@@ -54,6 +54,7 @@
 
 // I/O port handlers
 #include "port_drivers/io_ports.h"
+#include "port_drivers/files_io.h"
 
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
@@ -379,6 +380,9 @@ static void emulator_task(void *pvParameters)
     s_ws_enabled_cached = atomic_load(&g_websocket_enabled);
     
     printf("Emulator task started on Core %d\n", xPortGetCoreID());
+
+    // Initialize file transfer driver (creates Core 0 socket task)
+    files_io_init();
 
     //-------------------------------------------------------------------------
     // Initialize SD card and disk system on Core 1 (same core as emulator)

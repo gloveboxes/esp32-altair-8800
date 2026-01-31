@@ -7,7 +7,7 @@
  * - Ports 50-51: Statistics (stats_io) - disabled on ESP32
  * - Ports 45, 70: Utility functions (utility_io)
  * - Ports 109, 110, 114, 33, 201: HTTP file transfer (http_io) - disabled on ESP32
- * - Ports 60, 61: File transfer (files_io) - disabled on ESP32
+ * - Ports 60, 61: File transfer (files_io)
  */
 
 #pragma once
