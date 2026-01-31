@@ -35,9 +35,9 @@ static const char* TAG = "WS_Console";
 // Ping interval to keep WebSocket connections alive (microseconds)
 #define WS_PING_INTERVAL_US  (30 * 1000 * 1000)  // 30 seconds
 
-// TX task stack size and priority (lower than esp_timer to avoid starving system)
+// TX task stack size and priority (higher than other app tasks, still below esp_timer)
 #define WS_TX_TASK_STACK    4096
-#define WS_TX_TASK_PRIORITY 6      // Lower than default (esp_timer is 22)
+#define WS_TX_TASK_PRIORITY 11     // Keep below esp_timer (22)
 #define WS_TX_TASK_CORE     0      // Pin to Core 0 to avoid emulator core
 
 // FreeRTOS queues for cross-core communication

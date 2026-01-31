@@ -193,6 +193,8 @@ bool websocket_server_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = WEBSOCKET_SERVER_PORT;
     config.ctrl_port = WEBSOCKET_SERVER_PORT + 1;
+    // Raise HTTP server priority above other app tasks for fast page/WS handshakes.
+    config.task_priority = tskIDLE_PRIORITY + 12;
     config.max_open_sockets = 4;     // Minimal: 1 WS + 1 HTTP + headroom
     config.backlog_conn = 2;
     config.lru_purge_enable = true;
