@@ -233,7 +233,10 @@ void altair_panel_show_ip(const char *ip_addr, const char *hostname)
     if (!panel_initialized || ip_addr == NULL) {
         return;
     }
-    
+
+    // Bring panel to normal brightness once WiFi is connected and IP is known
+    ili9341_set_backlight(80);
+
     // Clear the entire bottom line
     ili9341_fill_rect(0, Y_IP_ADDRESS, LCD_H_RES, 15, COLOR_BLACK);
     
@@ -278,4 +281,13 @@ void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip
     
     ili9341_draw_string_small(line1_x, 110, line1, COLOR_WHITE, COLOR_BLACK);
     ili9341_draw_string_small(line2_x, 140, line2, COLOR_WHITE, COLOR_BLACK);
+}
+
+void altair_panel_set_backlight(int brightness)
+{
+    if (!panel_initialized) {
+        return;
+    }
+
+    ili9341_set_backlight(brightness);
 }

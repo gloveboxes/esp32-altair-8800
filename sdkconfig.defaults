@@ -1,6 +1,9 @@
 # Set target to ESP32-S3
 CONFIG_IDF_TARGET="esp32s3"
 
+# Use large partition table (app was overflowing 1MB default)
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
 # Disable Bluetooth (not used, saves ~60KB RAM)
 CONFIG_BT_ENABLED=n
 

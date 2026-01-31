@@ -76,4 +76,11 @@ void altair_panel_show_ip(const char *ip_addr, const char *hostname);
  */
 void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip);
 
+/**
+ * @brief Set panel backlight brightness (0-100)
+ *
+ * Values are treated as percent (0-100).
+ */
+void altair_panel_set_backlight(int brightness);
+
 #endif // ALTAIR_PANEL_H

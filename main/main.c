@@ -321,7 +321,7 @@ static void setup_wifi(void)
 
     // Start captive portal for configuration
     if (captive_portal_start()) {
-        // Show setup screen on LCD
+        // Show setup screen on LCD (panel may be off until WiFi connects)
         altair_panel_show_captive_portal(CAPTIVE_PORTAL_AP_SSID, captive_portal_get_ip());
         
         printf("\n");
@@ -563,6 +563,8 @@ void app_main(void)
     // Initialize front panel display on Core 0
     printf("Initializing front panel display on Core 0...\n");
     altair_panel_init();
+    // Keep backlight off during WiFi connect to reduce cold-boot power draw
+    altair_panel_set_backlight(0);
 
     // Start panel update task on Core 0
     xTaskCreatePinnedToCore(

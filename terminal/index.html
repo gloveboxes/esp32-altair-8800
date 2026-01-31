@@ -833,17 +833,20 @@
           const data = event.data;
 
           if (typeof data === "string") {
+            console.log("WebSocket received:", data.length, "bytes (string)");
             writeToTerminal(data);
             return;
           }
 
           if (data instanceof ArrayBuffer) {
+            console.log("WebSocket received:", data.byteLength, "bytes (ArrayBuffer)");
             const decoded = decoder.decode(data, { stream: true });
             writeToTerminal(decoded);
             return;
           }
 
           if (data instanceof Blob) {
+            console.log("WebSocket received:", data.size, "bytes (Blob)");
             void data.arrayBuffer()
               .then((buffer) => {
                 const decoded = decoder.decode(buffer, { stream: true });

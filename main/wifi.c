@@ -7,6 +7,7 @@
 
 #include "wifi.h"
 #include "config.h"
+#include "status_led.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -15,6 +16,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "mdns.h"
 #include "altair_panel.h"
@@ -33,7 +35,10 @@ static const char* TAG = "WiFi";
 #define DEFAULT_WIFI_TIMEOUT_MS  60000
 
 // Maximum connection retry attempts
-#define WIFI_MAX_RETRY  10
+#define WIFI_MAX_RETRY  15
+
+// Delay before any connect attempt (ms)
+#define WIFI_CONNECT_DELAY_MS  800
 
 // State variables
 static bool s_wifi_initialized = false;
@@ -46,9 +51,37 @@ static int s_retry_count = 0;
 // FreeRTOS event group for connection synchronization
 static EventGroupHandle_t s_wifi_event_group = NULL;
 
+// Timer for delayed connect attempts
+static esp_timer_handle_t s_connect_timer = NULL;
+
 // Network interfaces
 static esp_netif_t* s_sta_netif = NULL;
 static esp_netif_t* s_ap_netif = NULL;
+
+static void wifi_stop_connect_timer(void)
+{
+    if (s_connect_timer) {
+        (void)esp_timer_stop(s_connect_timer);
+    }
+}
+
+static void wifi_connect_timer_cb(void* arg)
+{
+    (void)arg;
+    if (!s_wifi_initialized || s_wifi_connected) {
+        return;
+    }
+    esp_wifi_connect();
+}
+
+static void wifi_schedule_connect(uint32_t delay_ms)
+{
+    if (!s_connect_timer) {
+        return;
+    }
+    wifi_stop_connect_timer();
+    ESP_ERROR_CHECK(esp_timer_start_once(s_connect_timer, (uint64_t)delay_ms * 1000ULL));
+}
 
 /**
  * @brief WiFi event handler
@@ -59,8 +92,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
             case WIFI_EVENT_STA_START:
-                ESP_LOGI(TAG, "Station started, connecting...");
-                esp_wifi_connect();
+                ESP_LOGI(TAG, "Station started, connecting in %u ms...", WIFI_CONNECT_DELAY_MS);
+                wifi_schedule_connect(WIFI_CONNECT_DELAY_MS);
                 break;
 
             case WIFI_EVENT_STA_DISCONNECTED: {
@@ -71,12 +104,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 s_wifi_connected = false;
                 s_ip_address[0] = '\0';
                 s_ip_raw = 0;
+                
+                // Update status LED to show disconnected state
+                status_led_set_wifi_status(false);
 
                 if (s_retry_count < WIFI_MAX_RETRY) {
                     s_retry_count++;
-                    ESP_LOGI(TAG, "Retrying connection (%d/%d)...", 
-                             s_retry_count, WIFI_MAX_RETRY);
-                    esp_wifi_connect();
+                    ESP_LOGI(TAG, "Retrying connection (%d/%d) in %u ms...", 
+                             s_retry_count, WIFI_MAX_RETRY, (unsigned)WIFI_CONNECT_DELAY_MS);
+                    wifi_schedule_connect(WIFI_CONNECT_DELAY_MS);
                 } else {
                     ESP_LOGE(TAG, "Connection failed after %d retries", WIFI_MAX_RETRY);
                     if (s_wifi_event_group) {
@@ -127,9 +163,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 // Show IP and hostname on front panel display
                 altair_panel_show_ip(s_ip_address, get_mdns_hostname());
                 
-                // Disable WiFi power save for lowest latency
-                esp_wifi_set_ps(WIFI_PS_NONE);
-                
                 // Initialize mDNS service
                 const char* hostname = get_mdns_hostname();
                 if (hostname) {
@@ -147,6 +180,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 
                 s_wifi_connected = true;
                 s_retry_count = 0;
+                wifi_stop_connect_timer();
+                
+                // Update status LED to show connected state
+                status_led_set_wifi_status(true);
                 
                 if (s_wifi_event_group) {
                     xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -159,6 +196,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 s_wifi_connected = false;
                 s_ip_address[0] = '\0';
                 s_ip_raw = 0;
+                
+                // Update status LED to show disconnected state
+                status_led_set_wifi_status(false);
                 break;
 
             default:
@@ -196,6 +236,14 @@ bool wifi_init(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    if (!s_connect_timer) {
+        const esp_timer_create_args_t timer_args = {
+            .callback = &wifi_connect_timer_cb,
+            .name = "wifi_connect",
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_connect_timer));
+    }
+
     // Register event handlers
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
@@ -207,6 +255,11 @@ bool wifi_init(void)
 
     s_wifi_initialized = true;
     ESP_LOGI(TAG, "WiFi initialized");
+    
+    // Initialize the status LED task
+    if (!status_led_init()) {
+        ESP_LOGW(TAG, "Status LED initialization failed (non-critical)");
+    }
 
     return true;
 }
@@ -232,6 +285,7 @@ wifi_result_t wifi_connect(void)
     // Reset state
     s_retry_count = 0;
     s_wifi_connected = false;
+    wifi_stop_connect_timer();
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
 
     // Configure station mode - zero struct first to ensure clean state
@@ -243,19 +297,23 @@ wifi_result_t wifi_connect(void)
     if (password && password[0] != '\0') {
         strncpy((char*)wifi_config.sta.password, password, 
                 sizeof(wifi_config.sta.password) - 1);
-        // WPA2-PSK as minimum threshold - accepts WPA2, WPA2/WPA3 transition, or WPA3
+        // Match wifi_test_s3: require WPA2 or better for secured networks
         wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     } else {
         // Open network
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     }
     
-    // WPA3 SAE settings (used when connecting to WPA3 networks)
+    // Use all-channel scan for better cold-boot compatibility
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.bssid_set = false;
+    
+    // WPA3 SAE settings - allow both H2E and hunting-and-pecking (matches wifi_test_s3)
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     wifi_config.sta.sae_h2e_identifier[0] = '\0';
-#ifdef CONFIG_ESP_WIFI_WPA3_COMPATIBLE_SUPPORT
-    wifi_config.sta.disable_wpa3_compatible_mode = 0;
-#endif
+    // PMF capable but not required for maximum compatibility
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -282,10 +340,12 @@ wifi_result_t wifi_connect(void)
         return WIFI_RESULT_OK;
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGE(TAG, "Failed to connect to %s", ssid);
+        wifi_stop_connect_timer();
         esp_wifi_stop();
         return WIFI_RESULT_CONNECT_FAILED;
     } else {
         ESP_LOGE(TAG, "Connection timeout");
+        wifi_stop_connect_timer();
         esp_wifi_stop();
         return WIFI_RESULT_TIMEOUT;
     }
@@ -298,6 +358,7 @@ void wifi_disconnect(void)
     }
 
     ESP_LOGI(TAG, "Disconnecting...");
+    wifi_stop_connect_timer();
     esp_wifi_disconnect();
     esp_wifi_stop();
     
@@ -375,6 +436,7 @@ bool wifi_start_ap(const char* ssid, const char* password)
     }
 
     // Stop any existing WiFi mode first
+    wifi_stop_connect_timer();
     esp_wifi_stop();
     vTaskDelay(pdMS_TO_TICKS(100));
 

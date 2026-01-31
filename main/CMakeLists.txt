@@ -1,6 +1,7 @@
 idf_component_register(SRCS "main.c"
                              "config.c"
                              "wifi.c"
+                             "status_led.c"
                              "websocket_console.c"
                              "websocket_server.c"
                              "../captive_portal/captive_portal.c"
@@ -29,6 +30,8 @@ idf_component_register(SRCS "main.c"
                                 sdmmc
                                 esp_driver_sdmmc
                                 esp_driver_usb_serial_jtag
+                                esp_driver_ledc
+                                esp_driver_rmt
                                 esp_timer
                                 nvs_flash
                                 esp_wifi

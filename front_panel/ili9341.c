@@ -12,12 +12,22 @@
 #include "freertos/task.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "esp_log.h"
 
 static const char *TAG = "ILI9341";
 
 // SPI device handle
 static spi_device_handle_t spi_handle = NULL;
+
+// Backlight PWM config
+#define BACKLIGHT_LEDC_TIMER     LEDC_TIMER_0
+#define BACKLIGHT_LEDC_MODE      LEDC_LOW_SPEED_MODE
+#define BACKLIGHT_LEDC_CHANNEL   LEDC_CHANNEL_0
+#define BACKLIGHT_LEDC_DUTY_RES  LEDC_TIMER_13_BIT
+#define BACKLIGHT_LEDC_FREQ_HZ   5000
+
+static bool s_backlight_pwm_ready = false;
 
 // Simple 8x8 font (ASCII 32-127)
 static const uint8_t font8x8[][8] = {
@@ -278,6 +288,27 @@ esp_err_t ili9341_init(void)
     // Keep backlight OFF during init to avoid showing uninitialized display
     gpio_set_level(LCD_PIN_BL, 0);
 
+    // Configure LEDC for backlight PWM (duty starts at 0)
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = BACKLIGHT_LEDC_MODE,
+        .timer_num = BACKLIGHT_LEDC_TIMER,
+        .duty_resolution = BACKLIGHT_LEDC_DUTY_RES,
+        .freq_hz = BACKLIGHT_LEDC_FREQ_HZ,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel_config_t ledc_channel = {
+        .gpio_num = LCD_PIN_BL,
+        .speed_mode = BACKLIGHT_LEDC_MODE,
+        .channel = BACKLIGHT_LEDC_CHANNEL,
+        .timer_sel = BACKLIGHT_LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    s_backlight_pwm_ready = true;
+
     // Initialize SPI bus
     spi_bus_config_t buscfg = {
         .mosi_io_num = LCD_PIN_MOSI,
@@ -408,9 +439,8 @@ esp_err_t ili9341_init(void)
     // Clear screen to black before turning on backlight (avoids flash of random data)
     ili9341_fill_screen(COLOR_BLACK);
 
-    // Now turn on backlight - screen is ready
-    gpio_set_level(LCD_PIN_BL, 1);
-    ESP_LOGI(TAG, "Backlight ON (GPIO%d HIGH)", LCD_PIN_BL);
+    // Leave backlight off; caller decides brightness
+    // ili9341_set_backlight(0);
 
     ESP_LOGI(TAG, "ILI9341 initialization complete");
     return ESP_OK;
@@ -418,6 +448,21 @@ esp_err_t ili9341_init(void)
 
 void ili9341_set_backlight(int brightness)
 {
+    if (brightness < 0) {
+        brightness = 0;
+    } else if (brightness > 100) {
+        brightness = 100;
+    }
+
+    if (s_backlight_pwm_ready) {
+        const uint32_t max_duty = (1U << BACKLIGHT_LEDC_DUTY_RES) - 1U;
+        uint32_t duty = (max_duty * (uint32_t)brightness) / 100U;
+        ledc_set_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL, duty);
+        ledc_update_duty(BACKLIGHT_LEDC_MODE, BACKLIGHT_LEDC_CHANNEL);
+        return;
+    }
+
+    // Fallback if PWM not initialized
     gpio_set_level(LCD_PIN_BL, brightness > 50 ? 1 : 0);
 }
 
