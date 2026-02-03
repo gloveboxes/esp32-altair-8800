@@ -6,7 +6,7 @@ An Altair 8800 emulator running on ESP32-S3 with WebSocket terminal access.
 
 ### Prerequisites
 
-- ESP-IDF v6.0 or later installed (see [ESP-IDF Getting Started](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/))
+- ESP-IDF v6.0 (stable release) installed (see [ESP-IDF Getting Started](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/))
 - ESP32-S3 target board
 
 ### Setup ESP-IDF Environment
@@ -15,13 +15,13 @@ Before running any `idf.py` commands, you must source the ESP-IDF environment sc
 
 ```bash
 # Run this in each new terminal session (adjust path to your ESP-IDF installation)
-source $HOME/esp/esp-idf/export.sh
+source $HOME/esp/v6.0/esp-idf/export.sh
 ```
 
-**Tip:** Add an alias to your shell profile (`~/.zshrc` or `~/.bashrc`):
+**Tip:** Add an alias to your shell profile (`~/.zshrc`, `.zprofile` or `~/.bashrc`):
 
 ```bash
-alias get_idf='source $HOME/esp/esp-idf/export.sh'
+alias get_idf='source $HOME/esp/v6.0/esp-idf/export.sh'
 ```
 
 Then simply run `get_idf` before building.
@@ -30,7 +30,7 @@ Then simply run `get_idf` before building.
 
 ```bash
 # Source ESP-IDF environment
-source $HOME/esp/esp-idf/export.sh
+source $HOME/esp/v6.0/esp-idf/export.sh
 
 # Set target (first time only)
 idf.py set-target esp32s3
