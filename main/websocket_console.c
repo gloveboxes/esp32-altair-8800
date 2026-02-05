@@ -363,7 +363,7 @@ void websocket_console_clear_queues(void)
  * @brief Handle incoming WebSocket data (called from WebSocket server)
  *
  * This function is called by the WebSocket server when data is received
- * from a client. It queues the data for the emulator to process.
+ * from a client. It queues the data for the emulator to process on Core 1.
  *
  * @param data Pointer to received data
  * @param len Length of received data
@@ -382,7 +382,7 @@ void websocket_console_handle_rx(const uint8_t* data, size_t len)
             ch = '\r';
         }
 
-        // Non-blocking enqueue
+        // Queue to RX queue - emulator loop on Core 1 will route based on CPU state
         if (xQueueSend(s_rx_queue, &ch, 0) != pdTRUE) {
             // Queue full - drop oldest and try again
             uint8_t discard;

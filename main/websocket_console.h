@@ -62,7 +62,7 @@ void websocket_console_enqueue_output(uint8_t value);
  * @brief Try to dequeue a byte from WebSocket input
  *
  * Called from the emulator (Core 1) to receive terminal input.
- * Non-blocking.
+ * Non-blocking. Emulator loop routes to emulator or monitor based on CPU state.
  *
  * @param value Pointer to store the received byte
  * @return true if a byte was available, false if queue empty

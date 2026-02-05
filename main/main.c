@@ -56,12 +56,15 @@
 #include "port_drivers/io_ports.h"
 #include "port_drivers/files_io.h"
 
+// CPU state and virtual monitor
+#include "cpu_state.h"
+
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
 #define CTRL_KEY(ch) ((ch) & 0x1F)
 
-// CPU instance
-static intel8080_t cpu;
+// Static disk controller reference for reset
+static disk_controller_t* g_disk_controller = NULL;
 
 // Global WiFi status
 static bool g_wifi_connected = false;
@@ -162,26 +165,34 @@ static uint8_t process_ansi_sequence(uint8_t ch)
 }
 
 // Terminal read function - non-blocking
-// Checks WebSocket console first (if enabled), then USB Serial JTAG
+// Reads from WebSocket console if enabled, otherwise USB Serial JTAG
 static uint8_t terminal_read(void)
 {
-    // Check WebSocket console first (if WiFi connected and client present)
-    // Uses cached value to avoid atomic_load overhead in hot path
+    uint8_t ch = 0x00;
+    
     if (s_ws_enabled_cached) {
+        // WebSocket enabled - read from WebSocket console
         uint8_t ws_ch;
         if (websocket_console_try_dequeue_input(&ws_ch)) {
-            return (uint8_t)(ws_ch & ASCII_MASK_7BIT);
+            ch = (uint8_t)(ws_ch & ASCII_MASK_7BIT);
+        }
+    } else {
+        // WebSocket not enabled - fall back to USB Serial JTAG
+        uint8_t c;
+        int len = usb_serial_jtag_read_bytes(&c, 1, 0);
+        if (len > 0) {
+            ch = (uint8_t)(c & ASCII_MASK_7BIT);
+            ch = process_ansi_sequence(ch);
         }
     }
-
-    // Fall back to USB Serial JTAG
-    uint8_t c;
-    int len = usb_serial_jtag_read_bytes(&c, 1, 0);
-    if (len > 0) {
-        uint8_t ch = (uint8_t)(c & ASCII_MASK_7BIT);
-        return process_ansi_sequence(ch);
+    
+    // Check for CTRL-M (ASCII 28) - toggle CPU mode
+    if (ch == 28) {
+        cpu_state_toggle_mode();
+        return 0x00;  // Don't pass to emulator
     }
-    return 0x00;  // No character available
+    
+    return ch;
 }
 
 // Terminal write function
@@ -203,7 +214,23 @@ static void terminal_write(uint8_t c)
 // Sense switches - return high byte of address bus (simple implementation)
 static uint8_t sense(void)
 {
-    return 0x00;  // No sense switches configured
+    return (uint8_t)(bus_switches >> 8);
+}
+
+//-----------------------------------------------------------------------------
+// Reset function for CPU virtual monitor
+//-----------------------------------------------------------------------------
+void altair_reset(void)
+{
+    if (g_disk_controller)
+    {
+        memset(memory, 0x00, 64 * 1024); // Clear Altair memory
+        loadDiskLoader(0xFF00);          // Load disk boot loader at 0xFF00
+        i8080_reset(&cpu, terminal_read, terminal_write, sense, 
+                    g_disk_controller, io_port_in, io_port_out);
+        i8080_examine(&cpu, 0xFF00);     // Reset to boot loader address
+        bus_switches = cpu.address_bus;
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -216,23 +243,8 @@ static uint8_t sense(void)
 #define PANEL_UPDATE_TASK_STACK_SIZE  4096
 #define PANEL_UPDATE_TASK_PRIORITY    4
 
-// Flag to signal initialization status
-// Using atomic for cross-core visibility
-static atomic_bool g_init_failed = false;
-
-// Main task handle for notifications
-static TaskHandle_t s_main_task = NULL;
-
 // Emulator task handle for startup notification
 static TaskHandle_t s_emulator_task = NULL;
-
-static void signal_init_failed(void)
-{
-    atomic_store(&g_init_failed, true);
-    if (s_main_task) {
-        xTaskNotifyGive(s_main_task);
-    }
-}
 
 //-----------------------------------------------------------------------------
 // WiFi Setup
@@ -354,9 +366,7 @@ static void panel_update_task(void *pvParameters)
 
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
-        if (!atomic_load(&g_init_failed)) {
-            altair_panel_update(&cpu);
-        }
+        altair_panel_update(&cpu);
         // If we overran the period, reset to avoid "catch-up" bursts.
         if ((xTaskGetTickCount() - last_wake) > pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS)) {
             last_wake = xTaskGetTickCount();
@@ -397,7 +407,6 @@ static void emulator_task(void *pvParameters)
         printf("  - No SD card inserted\n");
         printf("  - SD card not formatted as FAT32\n");
         printf("  - Incorrect wiring\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -417,7 +426,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_A: %s\n", DISK_A_PATH);
     if (!esp32_sd_disk_load(0, DISK_A_PATH)) {
         printf("  DISK_A load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -426,7 +434,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_B: %s\n", DISK_B_PATH);
     if (!esp32_sd_disk_load(1, DISK_B_PATH)) {
         printf("  DISK_B load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -435,7 +442,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_C: %s\n", DISK_C_PATH);
     if (!esp32_sd_disk_load(2, DISK_C_PATH)) {
         printf("  DISK_C load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -444,7 +450,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_D: %s\n", DISK_D_PATH);
     if (!esp32_sd_disk_load(3, DISK_D_PATH)) {
         printf("  DISK_D load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -468,7 +473,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
     if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len)) {
         printf("  DISK_A load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -478,7 +482,6 @@ static void emulator_task(void *pvParameters)
     printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
     if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len)) {
         printf("  DISK_B load failed!\n");
-        signal_init_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -495,6 +498,9 @@ static void emulator_task(void *pvParameters)
     };
 #endif
 
+    // Store disk controller reference for reset function
+    g_disk_controller = &disk_controller;
+
     // Load disk boot loader ROM at 0xFF00
     printf("Loading disk boot loader ROM at 0xFF00...\n");
     loadDiskLoader(0xFF00);
@@ -507,21 +513,52 @@ static void emulator_task(void *pvParameters)
     // Set CPU to boot from disk loader at 0xFF00
     printf("Setting PC to 0xFF00 (disk boot loader)\n");
     i8080_examine(&cpu, 0xFF00);
+    bus_switches = cpu.address_bus;
+
+    // Set CPU to running mode
+    cpu_state_set_mode(CPU_RUNNING);
 
     printf("\n");
     printf("Starting Altair 8800 emulation on Core 1...\n");
     printf("========================================\n\n");
     
-    // Main emulation loop - tight loop for maximum performance
+    // Main emulation loop
     for (;;) {
-        i8080_cycle(&cpu);
+        CPU_OPERATING_MODE mode = cpu_state_get_mode();
+        switch (mode)
+        {
+            case CPU_RUNNING:
+                // Hot path - execute 4000 cycles before checking state again
+                for (int i = 0; i < 4000; ++i) {
+                    i8080_cycle(&cpu);
+                }
+                break;
+                
+            case CPU_STOPPED:
+            {
+                // CPU stopped - poll for monitor commands from WebSocket
+                uint8_t ch;
+                if (websocket_console_try_dequeue_input(&ch) && ch != 0x00) {
+                    // Check for CTRL-M (ASCII 28) to toggle back to running mode
+                    if (ch == 28) {
+                        cpu_state_toggle_mode();
+                    } else {
+                        process_control_panel_commands_char(ch);
+                    }
+                }
+                vTaskDelay(1);  // Yield when stopped
+                break;
+            }
+                
+            default:
+                vTaskDelay(1);
+                break;
+        }
     }
 }
 
 void app_main(void)
 {
-    s_main_task = xTaskGetCurrentTaskHandle();
-
     // Initialize USB Serial JTAG driver for non-blocking terminal I/O
     usb_serial_jtag_driver_config_t usb_config = {
         .rx_buffer_size = 128,   // Single-char input, just need small queue
@@ -603,15 +640,6 @@ void app_main(void)
         xTaskNotifyGive(s_emulator_task);
     }
 
-    // Core 0 main loop - idle until notified of failure
-    for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        if (atomic_load(&g_init_failed)) {
-            printf("Emulator initialization failed. Halting.\n");
-            for (;;) {
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            }
-        }
-    }
+    // app_main() can return - FreeRTOS scheduler continues running other tasks
+    // The main task is automatically deleted by ESP-IDF when this function returns
 }

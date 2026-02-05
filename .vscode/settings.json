@@ -27,8 +27,8 @@
     "sdkconfig": "ini",
     "*.h": "c"
   },
-  "idf.espIdfPath": "/Users/dave/esp/v6.0/esp-idf",
-  "idf.toolsPath": "/Users/dave/.espressif",
+  "idf.espIdfPath": "${env:HOME}/esp/v6.0/esp-idf",
+  "idf.toolsPath": "${env:HOME}/.espressif",
   "idf.pythonInstallPath": "/opt/homebrew/bin/python3",
   "idf.port": "/dev/tty.usbmodem101",
   "idf.openOcdConfigs": [
