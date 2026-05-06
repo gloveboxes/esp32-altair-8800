@@ -299,7 +299,7 @@ static esp_err_t http_post_configure_handler(httpd_req_t* req)
     }
 
     // Save configuration
-    bool saved = config_save(ssid, password, rfs_ip[0] ? rfs_ip : NULL);
+    bool saved = altair_config_save(ssid, password, rfs_ip[0] ? rfs_ip : NULL);
     if (!saved) {
         ESP_LOGE(TAG, "Failed to save configuration");
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");

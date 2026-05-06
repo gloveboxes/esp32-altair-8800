@@ -337,6 +337,14 @@ uint8_t esp32_sd_disk_read(void)
         }
     }
 
+    // Clamp sectorPointer so that an over-read by the guest cannot walk past
+    // the end of sectorData and corrupt adjacent struct fields. Mirrors the
+    // bounds handling in esp32_sd_disk_write().
+    if (disk->sectorPointer >= SECTOR_SIZE + 2)
+    {
+        disk->sectorPointer = SECTOR_SIZE + 1;
+    }
+
     // Return current byte and advance pointer within sector
     return disk->sectorData[disk->sectorPointer++];
 }
@@ -346,6 +354,18 @@ static void writeSector(esp32_sd_disk_t* pDisk)
 {
     if (!pDisk->sectorDirty || !pDisk->file)
     {
+        return;
+    }
+
+    // Newlib stdio requires a positioning op when switching from reading to
+    // writing on the same FILE*. Without this, fwrite() can land at a stale
+    // file offset (the post-fread position) and gradually corrupt the disk
+    // image on long-running write-heavy workloads.
+    if (fseek(pDisk->file, pDisk->diskPointer, SEEK_SET) != 0)
+    {
+        ESP_LOGE(TAG, "writeSector: fseek to %u failed", pDisk->diskPointer);
+        pDisk->sectorPointer = 0;
+        pDisk->sectorDirty = false;
         return;
     }
 

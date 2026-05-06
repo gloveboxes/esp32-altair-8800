@@ -156,7 +156,7 @@ void disassemble(intel8080_t* cpu)
         uint8_to_binary(cpu->data_bus, data_bus_binary, sizeof(data_bus_binary));
 
         size_t msg_length = (size_t)snprintf(
-            panel_info, sizeof(panel_info), "\r\n%14s: Addr bus: %s%s (0x%04x), Data bus %s (0x%02x), %-12s  %dB",
+            panel_info, sizeof(panel_info), "\r\n%-6s: A=%s.%s(0x%04X) D=%s(0x%02X) %-12s %dB",
             "Disasm", address_bus_high_byte, address_bus_low_byte, cpu->address_bus, data_bus_binary, cpu->data_bus,
             get_i8080_instruction_name(cpu->data_bus, &instruction_length), instruction_length);
 
@@ -171,7 +171,7 @@ void disassemble(intel8080_t* cpu)
             uint8_to_binary(cpu->data_bus, data_bus_binary, sizeof(data_bus_binary));
 
             msg_length = (size_t)snprintf(
-                panel_info, sizeof(panel_info), "\r\n%14s: Addr bus: %s%s (0x%04x), Data bus %s (0x%02x)", "Disasm",
+                panel_info, sizeof(panel_info), "\r\n%-6s: A=%s.%s(0x%04X) D=%s(0x%02X)", "Disasm",
                 address_bus_high_byte, address_bus_low_byte, cpu->address_bus, data_bus_binary, cpu->data_bus);
 
             publish_message(panel_info, msg_length);
@@ -201,7 +201,7 @@ void trace(intel8080_t* cpu)
         uint8_to_binary(cpu->data_bus, data_bus_binary, sizeof(data_bus_binary));
 
         size_t msg_length = (size_t)snprintf(
-            panel_info, sizeof(panel_info), "\r\n%14s: Addr bus: %s%s (0x%04x), Data bus %s (0x%02x), %-12s  %dB",
+            panel_info, sizeof(panel_info), "\r\n%-6s: A=%s.%s(0x%04X) D=%s(0x%02X) %-12s %dB",
             "Trace", address_bus_high_byte, address_bus_low_byte, cpu->address_bus, data_bus_binary, cpu->data_bus,
             get_i8080_instruction_name(cpu->data_bus, &instruction_length), instruction_length);
 
@@ -218,7 +218,7 @@ void trace(intel8080_t* cpu)
             uint8_to_binary(cpu->data_bus, data_bus_binary, sizeof(data_bus_binary));
 
             msg_length = (size_t)snprintf(
-                panel_info, sizeof(panel_info), "\r\n%14s: Addr bus: %s%s (0x%04x), Data bus %s (0x%02x)", "Trace",
+                panel_info, sizeof(panel_info), "\r\n%-6s: A=%s.%s(0x%04X) D=%s(0x%02X)", "Trace",
                 address_bus_high_byte, address_bus_low_byte, cpu->address_bus, data_bus_binary, cpu->data_bus);
 
             publish_message(panel_info, msg_length);

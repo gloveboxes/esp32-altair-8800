@@ -3,7 +3,6 @@
  * @brief ESP32-S3 SD card driver for Altair 8800 emulator
  *
  * Provides SD card initialization and FAT mounting for the ESP32-S3.
- * The Waveshare ESP32-S3-RLCD-4.2 reference examples use SDMMC in 1-bit mode.
  */
 
 #ifndef _SDCARD_ESP32_H_

@@ -6,6 +6,7 @@
  */
 
 #include "port_drivers/io_ports.h"
+#include "port_drivers/chat_io.h"
 #include "port_drivers/files_io.h"
 #include "port_drivers/time_io.h"
 #include "port_drivers/utility_io.h"
@@ -52,6 +53,13 @@ void io_port_out(uint8_t port, uint8_t data)
 
         // Stats ports (50, 51) - not implemented on ESP32 yet
         // HTTP ports (109, 110, 114) - not implemented on ESP32 yet
+        // OpenAI chat ports
+        case 120:
+        case 121:
+        case 122:
+            chat_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
+            break;
+
         // Files ports (60, 61)
         case 60:
         case 61:
@@ -86,6 +94,12 @@ uint8_t io_port_in(uint8_t port)
             return 0x00;
 
         // HTTP status/data ports (33, 201) - not implemented on ESP32 yet
+        // OpenAI chat ports
+        case 120:
+        case 123:
+        case 124:
+            return chat_input(port);
+
         // Files ports (60, 61)
         case 60:
         case 61:

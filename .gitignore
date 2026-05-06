@@ -13,3 +13,6 @@ managed_components/
 
 # macOS
 .DS_Store
+
+references/
+Apps/

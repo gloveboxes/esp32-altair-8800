@@ -1,0 +1,1318 @@
+/**
+ * @file chat_io.c
+ * @brief OpenAI Chat Completions I/O port driver for ESP32.
+ */
+
+#include "port_drivers/chat_io.h"
+
+#include "config.h"
+#include "wifi.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "driver/usb_serial_jtag.h"
+#include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_tls.h"
+#include "mbedtls/error.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+
+#define CHAT_HOST "api.openai.com"
+#define CHAT_PORT 443
+#define CHAT_PATH "/v1/chat/completions"
+#define CHAT_DEFAULT_OPENAI_ENDPOINT "https://api.openai.com/v1/chat/completions"
+#define CHAT_PROVIDER_OPENAI "openai"
+#define CHAT_PROVIDER_COMPATIBLE "compatible"
+
+#define CHAT_API_KEY_MAX 192
+#define CHAT_ENDPOINT_MAX CONFIG_CHAT_ENDPOINT_MAX_LEN
+#define CHAT_HOST_MAX 96
+#define CHAT_PATH_MAX 96
+#define CHAT_REQUEST_MAX 8192
+#define CHAT_RX_BUFFER_SIZE 1024
+#define CHAT_SSE_LINE_MAX 1024
+#define CHAT_RESPONSE_QUEUE_DEPTH 2048
+#define CHAT_CONNECT_TIMEOUT_MS 15000
+#define CHAT_STREAM_TIMEOUT_MS 120000
+#define CHAT_TASK_STACK_SIZE 8192
+#define CHAT_TASK_PRIORITY 5
+#define CHAT_TASK_CORE 0
+
+typedef struct
+{
+    bool https;
+    char host[CHAT_HOST_MAX];
+    char host_header[CHAT_HOST_MAX + 8];
+    char path[CHAT_PATH_MAX];
+    int port;
+} chat_endpoint_t;
+
+typedef struct
+{
+    uint32_t generation;
+    size_t len;
+    char json[CHAT_REQUEST_MAX];
+} chat_request_t;
+
+typedef enum
+{
+    CHAT_RESP_CHAR = 0,
+    CHAT_RESP_EOF
+} chat_response_type_t;
+
+typedef struct
+{
+    uint32_t generation;
+    chat_response_type_t type;
+    uint8_t data;
+} chat_response_t;
+
+typedef enum
+{
+    CHUNK_SIZE = 0,
+    CHUNK_SIZE_LF,
+    CHUNK_DATA,
+    CHUNK_DATA_CR,
+    CHUNK_DATA_LF
+} chunk_state_t;
+
+typedef struct
+{
+    uint32_t generation;
+    bool headers_done;
+    uint32_t header_match;
+    bool status_checked;
+    int status_code;
+    char status_line[40];
+    size_t status_line_len;
+    chunk_state_t chunk_state;
+    size_t chunk_size;
+    size_t chunk_read;
+    bool chunk_extension;
+    char sse_line[CHAT_SSE_LINE_MAX];
+    size_t sse_len;
+    bool done;
+    bool response_truncated;
+} chat_parse_t;
+
+static const char *TAG = "CHAT_IO";
+
+static const unsigned char CHAT_GTS_ROOT_R4_PEM[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
+    "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
+    "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
+    "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
+    "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
+    "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
+    "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
+    "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
+    "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
+    "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
+    "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
+    "-----END CERTIFICATE-----\n";
+
+static QueueHandle_t s_chat_request_queue = NULL;
+static QueueHandle_t s_chat_response_queue = NULL;
+static char s_chat_api_key[CHAT_API_KEY_MAX];
+static char s_chat_provider[CONFIG_CHAT_PROVIDER_MAX_LEN + 1];
+static char s_chat_endpoint[CHAT_ENDPOINT_MAX + 1];
+static bool s_network_available = false;
+static bool s_initialized = false;
+
+static struct
+{
+    char request[CHAT_REQUEST_MAX];
+    size_t request_len;
+    uint32_t generation;
+    uint32_t next_generation;
+    bool request_overflow;
+    bool eof_seen;
+    uint8_t pending_char;
+    bool has_pending_char;
+} port_state;
+
+static void chat_client_task(void *arg);
+static void chat_reset_request(void);
+static void chat_reset_response(void);
+static void chat_request_add_char(uint8_t data);
+static void chat_trigger_request(void);
+static bool chat_load_next_char(void);
+static void chat_queue_char(chat_parse_t *parser, uint32_t generation, uint8_t data, bool force);
+static void chat_queue_text(uint32_t generation, const char *text);
+static void chat_queue_eof(chat_parse_t *parser, uint32_t generation);
+static void chat_process_request(chat_request_t *request);
+static void chat_load_settings(void);
+static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed);
+static bool chat_send_all(esp_tls_t *tls, const uint8_t *data, size_t len);
+static bool chat_read_response(esp_tls_t *tls, chat_parse_t *parser);
+static void chat_log_tls_error(esp_tls_t *tls, int ret);
+static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch);
+static void chat_process_body_byte(chat_parse_t *parser, uint8_t ch);
+static void chat_process_sse_byte(chat_parse_t *parser, uint8_t ch);
+static void chat_extract_content(chat_parse_t *parser, const char *json);
+
+static uint32_t chat_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static void chat_serial_drain_line(uint32_t idle_timeout_ms)
+{
+    int64_t idle_start = esp_timer_get_time();
+    while ((esp_timer_get_time() - idle_start) < ((int64_t)idle_timeout_ms * 1000))
+    {
+        uint8_t c = 0;
+        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(10));
+        if (len <= 0)
+        {
+            continue;
+        }
+        if (c == '\r' || c == '\n')
+        {
+            return;
+        }
+        idle_start = esp_timer_get_time();
+    }
+}
+
+static void chat_serial_write_text(const char *text)
+{
+    if (!text)
+    {
+        return;
+    }
+
+    size_t len = strlen(text);
+    while (len > 0)
+    {
+        int written = usb_serial_jtag_write_bytes((const uint8_t *)text, len, pdMS_TO_TICKS(100));
+        if (written <= 0)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+        text += written;
+        len -= (size_t)written;
+    }
+}
+
+static void chat_serial_write_char(uint8_t c)
+{
+    usb_serial_jtag_write_bytes(&c, 1, pdMS_TO_TICKS(100));
+}
+
+static bool chat_provider_is_compatible(void)
+{
+    return strcmp(s_chat_provider, CHAT_PROVIDER_COMPATIBLE) == 0;
+}
+
+static void chat_load_settings(void)
+{
+    s_chat_provider[0] = '\0';
+    s_chat_endpoint[0] = '\0';
+    s_chat_api_key[0] = '\0';
+
+    config_load_chat_settings(s_chat_provider, sizeof(s_chat_provider),
+                              s_chat_endpoint, sizeof(s_chat_endpoint),
+                              s_chat_api_key, sizeof(s_chat_api_key));
+
+    if (strcmp(s_chat_provider, CHAT_PROVIDER_COMPATIBLE) != 0)
+    {
+        strncpy(s_chat_provider, CHAT_PROVIDER_OPENAI, sizeof(s_chat_provider) - 1);
+        s_chat_provider[sizeof(s_chat_provider) - 1] = '\0';
+    }
+}
+
+static int chat_serial_read_command_ms(uint32_t timeout_ms)
+{
+    int64_t start = esp_timer_get_time();
+    while ((esp_timer_get_time() - start) < ((int64_t)timeout_ms * 1000))
+    {
+        uint8_t c = 0;
+        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
+        if (len <= 0)
+        {
+            continue;
+        }
+
+        if (c == '\r' || c == '\n')
+        {
+            return 0;
+        }
+        if (c == ' ' || c == '\t')
+        {
+            continue;
+        }
+        chat_serial_drain_line(50);
+        if (c >= 'a' && c <= 'z')
+        {
+            c = (uint8_t)(c - 'a' + 'A');
+        }
+        return c;
+    }
+    return -1;
+}
+
+static void chat_print_menu(void)
+{
+    printf("\nChat provider manager\n");
+    printf("  1 - configure OpenAI\n");
+    printf("  2 - configure OpenAI Compatible endpoint\n");
+    printf("  S - show current settings\n");
+    printf("  Q - continue boot\n");
+}
+
+static bool chat_serial_read_line(const char *prompt, char *buffer, size_t buffer_len, bool mask_input)
+{
+    size_t length = 0;
+
+    if (!buffer || buffer_len == 0)
+    {
+        return false;
+    }
+
+    buffer[0] = '\0';
+    chat_serial_write_text(prompt);
+
+    for (;;)
+    {
+        uint8_t c = 0;
+        int read_len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
+        if (read_len <= 0)
+        {
+            continue;
+        }
+
+        if (c == '\r' || c == '\n')
+        {
+            chat_serial_write_text("\r\n");
+            buffer[length] = '\0';
+            return true;
+        }
+
+        if (c == 0x08 || c == 0x7F)
+        {
+            if (length > 0)
+            {
+                length--;
+                buffer[length] = '\0';
+                chat_serial_write_text("\b \b");
+            }
+            continue;
+        }
+
+        if (c < 32 || c > 126 || length + 1 >= buffer_len)
+        {
+            continue;
+        }
+
+        buffer[length++] = (char)c;
+        buffer[length] = '\0';
+        chat_serial_write_char(mask_input ? '*' : c);
+    }
+}
+
+static void chat_print_settings(void)
+{
+    printf("\nChat provider settings\n");
+    printf("  Provider: %s\n", chat_provider_is_compatible() ? "OpenAI Compatible" : "OpenAI");
+    printf("  Endpoint: %s\n", chat_provider_is_compatible() ?
+           (s_chat_endpoint[0] ? s_chat_endpoint : "(not set)") : CHAT_DEFAULT_OPENAI_ENDPOINT);
+    printf("  Model: from CHAT.C/chat.cfg request\n");
+    printf("  API key: %s\n", s_chat_api_key[0] ? "set" : "not set");
+}
+
+static void chat_configure_openai(void)
+{
+    char key[CHAT_API_KEY_MAX];
+
+    printf("\nConfigure OpenAI\n");
+    printf("Endpoint: %s\n", CHAT_DEFAULT_OPENAI_ENDPOINT);
+    if (s_chat_api_key[0])
+    {
+        printf("Current API key is set. Press Enter to keep it, '-' to clear it, or paste a replacement.\n");
+    }
+    else
+    {
+        printf("Paste an OpenAI API key, or press Enter to leave it unset.\n");
+    }
+
+    if (!chat_serial_read_line("openai key> ", key, sizeof(key), true))
+    {
+        return;
+    }
+
+    if (key[0] == '\0' && s_chat_api_key[0])
+    {
+        strncpy(key, s_chat_api_key, sizeof(key) - 1);
+        key[sizeof(key) - 1] = '\0';
+    }
+    else if (strcmp(key, "-") == 0)
+    {
+        key[0] = '\0';
+    }
+
+    if (config_save_chat_settings(CHAT_PROVIDER_OPENAI, "", key))
+    {
+        chat_load_settings();
+    }
+}
+
+static void chat_configure_compatible(void)
+{
+    char endpoint[CHAT_ENDPOINT_MAX + 1];
+    char key[CHAT_API_KEY_MAX];
+    chat_endpoint_t parsed;
+    bool editing_compatible = chat_provider_is_compatible();
+
+    printf("\nConfigure OpenAI Compatible Endpoint\n");
+    printf("Examples: http://192.168.1.20:11434 or http://192.168.1.20:11434/v1/chat/completions\n");
+    if (s_chat_endpoint[0])
+    {
+        printf("Current endpoint: %s\n", s_chat_endpoint);
+        printf("Press Enter to keep it, or type a replacement.\n");
+    }
+    else
+    {
+        printf("Type the endpoint URL. Missing path defaults to /v1/chat/completions.\n");
+    }
+    if (!chat_serial_read_line("endpoint> ", endpoint, sizeof(endpoint), false))
+    {
+        return;
+    }
+    if (endpoint[0] == '\0' && s_chat_endpoint[0])
+    {
+        strncpy(endpoint, s_chat_endpoint, sizeof(endpoint) - 1);
+        endpoint[sizeof(endpoint) - 1] = '\0';
+    }
+    if (!chat_parse_endpoint(endpoint, &parsed))
+    {
+        printf("Endpoint must start with http:// or https:// and include a host.\n");
+        return;
+    }
+    printf("Endpoint: %s\n", endpoint);
+
+    printf("Model and temperature are read from the CHAT.C request JSON (CHAT.CFG).\n");
+
+    if (editing_compatible && s_chat_api_key[0])
+    {
+        printf("API key is optional. Press Enter to keep it, '-' to clear, or paste a replacement.\n");
+    }
+    else
+    {
+        printf("API key is optional. Press Enter for no key, or paste a value.\n");
+    }
+    if (!chat_serial_read_line("api key> ", key, sizeof(key), true))
+    {
+        return;
+    }
+    if (key[0] == '\0' && editing_compatible && s_chat_api_key[0])
+    {
+        strncpy(key, s_chat_api_key, sizeof(key) - 1);
+        key[sizeof(key) - 1] = '\0';
+    }
+    else if (strcmp(key, "-") == 0)
+    {
+        key[0] = '\0';
+    }
+
+    if (config_save_chat_settings(CHAT_PROVIDER_COMPATIBLE, endpoint, key))
+    {
+        chat_load_settings();
+    }
+}
+
+void chat_io_init(void)
+{
+    if (s_initialized)
+    {
+        return;
+    }
+
+    chat_load_settings();
+
+    s_chat_request_queue = xQueueCreate(1, sizeof(chat_request_t *));
+    s_chat_response_queue = xQueueCreateWithCaps(CHAT_RESPONSE_QUEUE_DEPTH,
+                                                 sizeof(chat_response_t),
+                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_chat_response_queue)
+    {
+        s_chat_response_queue = xQueueCreate(CHAT_RESPONSE_QUEUE_DEPTH, sizeof(chat_response_t));
+    }
+
+    if (!s_chat_request_queue || !s_chat_response_queue)
+    {
+        ESP_LOGE(TAG, "Failed to create chat queues");
+        return;
+    }
+
+    memset(&port_state, 0, sizeof(port_state));
+    port_state.next_generation = 1;
+    s_network_available = false;
+
+    BaseType_t ret = xTaskCreatePinnedToCore(chat_client_task,
+                                             "chat_client",
+                                             CHAT_TASK_STACK_SIZE,
+                                             NULL,
+                                             CHAT_TASK_PRIORITY,
+                                             NULL,
+                                             CHAT_TASK_CORE);
+    if (ret != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create chat client task");
+        vQueueDelete(s_chat_request_queue);
+        vQueueDelete(s_chat_response_queue);
+        s_chat_request_queue = NULL;
+        s_chat_response_queue = NULL;
+        return;
+    }
+
+    s_initialized = true;
+    printf("[Chat] Chat port driver initialized on ports 120-124\n");
+}
+
+void chat_io_set_network_available(bool available)
+{
+    s_network_available = available;
+}
+
+void chat_io_prompt_api_key(void)
+{
+    chat_load_settings();
+    chat_configure_openai();
+}
+
+void chat_io_run_config_shell(void)
+{
+    chat_load_settings();
+
+    chat_print_menu();
+
+    for (;;)
+    {
+        printf("chat> ");
+        int cmd = chat_serial_read_command_ms(60000);
+        printf("\n");
+        if (cmd == -1)
+        {
+            printf("Chat provider manager timed out.\n\n");
+            return;
+        }
+
+        switch (cmd)
+        {
+        case 0:
+            break;
+
+        case '1':
+            chat_configure_openai();
+            chat_print_menu();
+            break;
+
+        case '2':
+            chat_configure_compatible();
+            chat_print_menu();
+            break;
+
+        case 'S':
+            chat_print_settings();
+            chat_print_menu();
+            break;
+
+        case 'Q':
+            printf("Leaving chat provider manager.\n\n");
+            return;
+
+        default:
+            if (cmd > ' ')
+            {
+                printf("Unknown command '%c'. Use 1, 2, S, or Q.\n", (char)cmd);
+            }
+            break;
+        }
+    }
+}
+
+void chat_io_run_boot_shell(void)
+{
+    chat_load_settings();
+
+    if (!usb_serial_jtag_is_connected())
+    {
+        return;
+    }
+
+    chat_print_settings();
+    printf("Press 'A' within 5 seconds to manage chat provider settings.\n");
+    printf("Press Enter to continue boot now.\n");
+
+    int c = chat_serial_read_command_ms(5000);
+    if (c == -1 || c == 0 || c != 'A')
+    {
+        return;
+    }
+
+    chat_io_run_config_shell();
+}
+
+static void chat_reset_request(void)
+{
+    port_state.request_len = 0;
+    port_state.request[0] = '\0';
+    port_state.request_overflow = false;
+}
+
+static void chat_reset_response(void)
+{
+    chat_response_t discarded;
+    while (s_chat_response_queue && xQueueReceive(s_chat_response_queue, &discarded, 0) == pdTRUE)
+    {
+    }
+    port_state.eof_seen = false;
+    port_state.has_pending_char = false;
+    port_state.generation = port_state.next_generation++;
+}
+
+static void chat_request_add_char(uint8_t data)
+{
+    if (data == 0)
+    {
+        if (port_state.request_len < sizeof(port_state.request))
+        {
+            port_state.request[port_state.request_len] = '\0';
+        }
+        return;
+    }
+
+    if (port_state.request_len + 1 < sizeof(port_state.request))
+    {
+        port_state.request[port_state.request_len++] = (char)data;
+        port_state.request[port_state.request_len] = '\0';
+    }
+    else
+    {
+        port_state.request_overflow = true;
+    }
+}
+
+static void chat_trigger_request(void)
+{
+    chat_reset_response();
+
+    if (port_state.request_overflow || port_state.request_len == 0)
+    {
+        chat_queue_text(port_state.generation, "OpenAI request buffer error\n");
+        chat_queue_eof(NULL, port_state.generation);
+        return;
+    }
+
+    chat_request_t *request = heap_caps_malloc(sizeof(chat_request_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!request)
+    {
+        request = malloc(sizeof(chat_request_t));
+    }
+
+    if (!request)
+    {
+        chat_queue_text(port_state.generation, "OpenAI out of memory\n");
+        chat_queue_eof(NULL, port_state.generation);
+        return;
+    }
+
+    memset(request, 0, sizeof(*request));
+    request->generation = port_state.generation;
+    request->len = port_state.request_len;
+    memcpy(request->json, port_state.request, port_state.request_len + 1);
+
+    if (!s_chat_request_queue || xQueueSend(s_chat_request_queue, &request, 0) != pdTRUE)
+    {
+        free(request);
+        chat_queue_text(port_state.generation, "OpenAI request queue busy\n");
+        chat_queue_eof(NULL, port_state.generation);
+    }
+}
+
+size_t chat_output(int port, uint8_t data, char *buffer, size_t buffer_length)
+{
+    (void)buffer;
+    (void)buffer_length;
+
+    if (!s_initialized)
+    {
+        return 0;
+    }
+
+    if (port == CHAT_PORT_TRIGGER)
+    {
+        chat_reset_request();
+    }
+    else if (port == CHAT_PORT_REQUEST)
+    {
+        chat_request_add_char(data);
+    }
+    else if (port == CHAT_PORT_RESET_RESPONSE)
+    {
+        chat_reset_response();
+    }
+
+    return 0;
+}
+
+static bool chat_load_next_char(void)
+{
+    chat_response_t response;
+
+    while (s_chat_response_queue && xQueueReceive(s_chat_response_queue, &response, 0) == pdTRUE)
+    {
+        if (response.generation != port_state.generation)
+        {
+            continue;
+        }
+        if (response.type == CHAT_RESP_EOF)
+        {
+            port_state.eof_seen = true;
+            return false;
+        }
+        port_state.pending_char = response.data;
+        port_state.has_pending_char = true;
+        return true;
+    }
+
+    return false;
+}
+
+uint8_t chat_input(uint8_t port)
+{
+    if (!s_initialized)
+    {
+        return CHAT_STATUS_EOF;
+    }
+
+    if (port == CHAT_PORT_TRIGGER)
+    {
+        chat_trigger_request();
+        return 0;
+    }
+
+    if (port == CHAT_PORT_STATUS)
+    {
+        if (port_state.has_pending_char || chat_load_next_char())
+        {
+            return CHAT_STATUS_DATA_READY;
+        }
+        return port_state.eof_seen ? CHAT_STATUS_EOF : CHAT_STATUS_WAITING;
+    }
+
+    if (port == CHAT_PORT_DATA)
+    {
+        if (!port_state.has_pending_char)
+        {
+            chat_load_next_char();
+        }
+        if (port_state.has_pending_char)
+        {
+            port_state.has_pending_char = false;
+            return port_state.pending_char;
+        }
+    }
+
+    return 0;
+}
+
+void chat_client_poll(void)
+{
+}
+
+static void chat_client_task(void *arg)
+{
+    (void)arg;
+
+    for (;;)
+    {
+        chat_request_t *request = NULL;
+        if (xQueueReceive(s_chat_request_queue, &request, portMAX_DELAY) != pdTRUE || !request)
+        {
+            continue;
+        }
+
+        chat_process_request(request);
+        free(request);
+    }
+}
+
+static bool chat_starts_with(const char *text, const char *prefix)
+{
+    while (*prefix)
+    {
+        if (*text++ != *prefix++)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed)
+{
+    const char *cursor;
+    const char *path_start;
+    const char *host_end;
+    const char *port_start = NULL;
+    size_t host_len;
+    size_t host_header_len;
+    size_t path_len;
+    int port = 0;
+
+    if (!endpoint || !parsed)
+    {
+        return false;
+    }
+
+    memset(parsed, 0, sizeof(*parsed));
+
+    if (chat_starts_with(endpoint, "https://"))
+    {
+        parsed->https = true;
+        parsed->port = 443;
+        cursor = endpoint + 8;
+    }
+    else if (chat_starts_with(endpoint, "http://"))
+    {
+        parsed->https = false;
+        parsed->port = 80;
+        cursor = endpoint + 7;
+    }
+    else
+    {
+        return false;
+    }
+
+    path_start = strchr(cursor, '/');
+    host_end = path_start ? path_start : cursor + strlen(cursor);
+    if (host_end == cursor)
+    {
+        return false;
+    }
+
+    for (const char *p = cursor; p < host_end; p++)
+    {
+        if (*p == ':')
+        {
+            port_start = p + 1;
+            host_end = p;
+            break;
+        }
+    }
+
+    host_len = (size_t)(host_end - cursor);
+    if (host_len == 0 || host_len >= sizeof(parsed->host))
+    {
+        return false;
+    }
+    memcpy(parsed->host, cursor, host_len);
+    parsed->host[host_len] = '\0';
+
+    if (port_start)
+    {
+        port = atoi(port_start);
+        if (port <= 0 || port > 65535)
+        {
+            return false;
+        }
+        parsed->port = port;
+    }
+
+    host_header_len = path_start ? (size_t)(path_start - cursor) : strlen(cursor);
+    if (host_header_len == 0 || host_header_len >= sizeof(parsed->host_header))
+    {
+        return false;
+    }
+    memcpy(parsed->host_header, cursor, host_header_len);
+    parsed->host_header[host_header_len] = '\0';
+
+    if (!path_start || path_start[0] == '\0' || strcmp(path_start, "/") == 0)
+    {
+        strncpy(parsed->path, CHAT_PATH, sizeof(parsed->path) - 1);
+        parsed->path[sizeof(parsed->path) - 1] = '\0';
+    }
+    else
+    {
+        path_len = strlen(path_start);
+        if (path_len >= sizeof(parsed->path))
+        {
+            return false;
+        }
+        memcpy(parsed->path, path_start, path_len + 1);
+    }
+
+    return true;
+}
+
+static void chat_process_request(chat_request_t *request)
+{
+    if (!chat_provider_is_compatible() && s_chat_api_key[0] == '\0')
+    {
+        chat_queue_text(request->generation, "OpenAI API key not configured\n");
+        chat_queue_eof(NULL, request->generation);
+        return;
+    }
+
+    if (!s_network_available || !wifi_is_connected())
+    {
+        chat_queue_text(request->generation, "OpenAI network unavailable\n");
+        chat_queue_eof(NULL, request->generation);
+        return;
+    }
+
+    const char *endpoint = chat_provider_is_compatible() ? s_chat_endpoint : CHAT_DEFAULT_OPENAI_ENDPOINT;
+    chat_endpoint_t parsed_endpoint;
+    if (!chat_parse_endpoint(endpoint, &parsed_endpoint))
+    {
+        chat_queue_text(request->generation, "Chat endpoint invalid\n");
+        chat_queue_eof(NULL, request->generation);
+        return;
+    }
+
+    size_t body_len = request->len;
+    const char *body = request->json;
+
+    esp_tls_t *tls = esp_tls_init();
+    if (!tls)
+    {
+        chat_queue_text(request->generation, "OpenAI TLS init failed\n");
+        chat_queue_eof(NULL, request->generation);
+        return;
+    }
+
+    esp_tls_cfg_t cfg = {
+        .timeout_ms = CHAT_CONNECT_TIMEOUT_MS,
+        .is_plain_tcp = !parsed_endpoint.https,
+    };
+    if (parsed_endpoint.https)
+    {
+        cfg.common_name = parsed_endpoint.host;
+        if (chat_provider_is_compatible())
+        {
+            cfg.crt_bundle_attach = esp_crt_bundle_attach;
+        }
+        else
+        {
+            cfg.cacert_buf = CHAT_GTS_ROOT_R4_PEM;
+            cfg.cacert_bytes = sizeof(CHAT_GTS_ROOT_R4_PEM);
+        }
+    }
+
+    int ret = esp_tls_conn_new_sync(parsed_endpoint.host, strlen(parsed_endpoint.host), parsed_endpoint.port, &cfg, tls);
+    if (ret != 1)
+    {
+        chat_log_tls_error(tls, ret);
+        chat_queue_text(request->generation, "OpenAI connect failed\n");
+        chat_queue_eof(NULL, request->generation);
+        esp_tls_conn_destroy(tls);
+        return;
+    }
+
+    char header[768];
+    char auth_header[224] = {0};
+    if (s_chat_api_key[0] != '\0')
+    {
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s\r\n", s_chat_api_key);
+    }
+    int header_len = snprintf(header, sizeof(header),
+                              "POST %s HTTP/1.1\r\n"
+                              "Host: %s\r\n"
+                              "%s"
+                              "Content-Type: application/json\r\n"
+                              "Accept: text/event-stream\r\n"
+                              "Connection: close\r\n"
+                              "Content-Length: %u\r\n\r\n",
+                              parsed_endpoint.path, parsed_endpoint.host_header, auth_header, (unsigned int)body_len);
+    if (header_len <= 0 || (size_t)header_len >= sizeof(header))
+    {
+        chat_queue_text(request->generation, "OpenAI request header error\n");
+        chat_queue_eof(NULL, request->generation);
+        esp_tls_conn_destroy(tls);
+        return;
+    }
+
+    if (!chat_send_all(tls, (const uint8_t *)header, (size_t)header_len) ||
+        !chat_send_all(tls, (const uint8_t *)body, body_len))
+    {
+        chat_queue_text(request->generation, "OpenAI send failed\n");
+        chat_queue_eof(NULL, request->generation);
+        esp_tls_conn_destroy(tls);
+        return;
+    }
+
+    chat_parse_t parser;
+    memset(&parser, 0, sizeof(parser));
+    parser.generation = request->generation;
+    parser.chunk_state = CHUNK_SIZE;
+
+    if (!chat_read_response(tls, &parser) && !parser.done)
+    {
+        chat_queue_text(request->generation, "OpenAI stream error\n");
+    }
+    chat_queue_eof(&parser, request->generation);
+
+    esp_tls_conn_destroy(tls);
+}
+
+static void chat_log_tls_error(esp_tls_t *tls, int ret)
+{
+    esp_tls_error_handle_t error_handle = NULL;
+    int esp_tls_code = 0;
+    int esp_tls_flags = 0;
+
+    if (tls && esp_tls_get_error_handle(tls, &error_handle) == ESP_OK && error_handle &&
+        esp_tls_get_and_clear_last_error(error_handle, &esp_tls_code, &esp_tls_flags) == ESP_OK)
+    {
+        char error_text[96];
+        mbedtls_strerror(esp_tls_code, error_text, sizeof(error_text));
+        ESP_LOGE(TAG, "TLS connect failed: ret=%d tls=0x%x flags=0x%x %s",
+                 ret, esp_tls_code, esp_tls_flags, error_text);
+        return;
+    }
+
+    ESP_LOGE(TAG, "TLS connect failed: ret=%d", ret);
+}
+
+static bool chat_send_all(esp_tls_t *tls, const uint8_t *data, size_t len)
+{
+    size_t sent = 0;
+    uint32_t start_ms = chat_ms();
+
+    while (sent < len)
+    {
+        ssize_t written = esp_tls_conn_write(tls, data + sent, len - sent);
+        if (written > 0)
+        {
+            sent += (size_t)written;
+            start_ms = chat_ms();
+            continue;
+        }
+
+        if (written == 0 || (errno != EAGAIN && errno != EINTR))
+        {
+            return false;
+        }
+
+        if (chat_ms() - start_ms > CHAT_CONNECT_TIMEOUT_MS)
+        {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    return true;
+}
+
+static bool chat_read_response(esp_tls_t *tls, chat_parse_t *parser)
+{
+    uint8_t rx_buffer[CHAT_RX_BUFFER_SIZE];
+    uint32_t last_rx_ms = chat_ms();
+
+    while (!parser->done)
+    {
+        ssize_t len = esp_tls_conn_read(tls, rx_buffer, sizeof(rx_buffer));
+        if (len > 0)
+        {
+            last_rx_ms = chat_ms();
+            for (ssize_t i = 0; i < len && !parser->done; i++)
+            {
+                chat_process_rx_byte(parser, rx_buffer[i]);
+            }
+            continue;
+        }
+
+        if (len == 0)
+        {
+            return true;
+        }
+
+        if (errno != EAGAIN && errno != EINTR)
+        {
+            return false;
+        }
+
+        if (chat_ms() - last_rx_ms > CHAT_STREAM_TIMEOUT_MS)
+        {
+            chat_queue_text(parser->generation, "OpenAI stream timeout\n");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    return true;
+}
+
+static int chat_hex_value(uint8_t ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch)
+{
+    if (!parser->headers_done)
+    {
+        if (!parser->status_checked)
+        {
+            if (ch == '\r')
+            {
+                parser->status_line[parser->status_line_len] = '\0';
+                parser->status_checked = true;
+                const char *sp = strchr(parser->status_line, ' ');
+                if (sp)
+                {
+                    parser->status_code = atoi(sp + 1);
+                }
+                if (parser->status_code != 200)
+                {
+                    char msg[48];
+                    snprintf(msg, sizeof(msg), "OpenAI HTTP %d\n", parser->status_code);
+                    chat_queue_text(parser->generation, msg);
+                    parser->done = true;
+                    return;
+                }
+            }
+            else if (parser->status_line_len + 1 < sizeof(parser->status_line))
+            {
+                parser->status_line[parser->status_line_len++] = (char)ch;
+            }
+        }
+
+        parser->header_match = (parser->header_match << 8) | ch;
+        if (parser->header_match == 0x0d0a0d0au)
+        {
+            parser->headers_done = true;
+        }
+        return;
+    }
+
+    chat_process_body_byte(parser, ch);
+}
+
+static void chat_process_body_byte(chat_parse_t *parser, uint8_t ch)
+{
+    switch (parser->chunk_state)
+    {
+        case CHUNK_SIZE:
+        {
+            int value = chat_hex_value(ch);
+            if (value >= 0 && !parser->chunk_extension)
+            {
+                parser->chunk_size = (parser->chunk_size << 4) | (size_t)value;
+            }
+            else if (ch == ';')
+            {
+                parser->chunk_extension = true;
+            }
+            else if (ch == '\r')
+            {
+                parser->chunk_state = CHUNK_SIZE_LF;
+            }
+            break;
+        }
+
+        case CHUNK_SIZE_LF:
+            if (ch == '\n')
+            {
+                if (parser->chunk_size == 0)
+                {
+                    parser->done = true;
+                }
+                else
+                {
+                    parser->chunk_read = 0;
+                    parser->chunk_state = CHUNK_DATA;
+                }
+            }
+            break;
+
+        case CHUNK_DATA:
+            chat_process_sse_byte(parser, ch);
+            parser->chunk_read++;
+            if (parser->chunk_read >= parser->chunk_size)
+            {
+                parser->chunk_state = CHUNK_DATA_CR;
+            }
+            break;
+
+        case CHUNK_DATA_CR:
+            parser->chunk_state = CHUNK_DATA_LF;
+            break;
+
+        case CHUNK_DATA_LF:
+            parser->chunk_size = 0;
+            parser->chunk_read = 0;
+            parser->chunk_extension = false;
+            parser->chunk_state = CHUNK_SIZE;
+            break;
+    }
+}
+
+static void chat_process_sse_byte(chat_parse_t *parser, uint8_t ch)
+{
+    if (ch == '\r')
+    {
+        return;
+    }
+
+    if (ch != '\n')
+    {
+        if (parser->sse_len + 1 < sizeof(parser->sse_line))
+        {
+            parser->sse_line[parser->sse_len++] = (char)ch;
+        }
+        return;
+    }
+
+    parser->sse_line[parser->sse_len] = '\0';
+    if (strncmp(parser->sse_line, "data: ", 6) == 0)
+    {
+        const char *payload = parser->sse_line + 6;
+        if (strcmp(payload, "[DONE]") == 0)
+        {
+            parser->done = true;
+        }
+        else
+        {
+            chat_extract_content(parser, payload);
+        }
+    }
+    parser->sse_len = 0;
+}
+
+static int chat_hex_nibble(char ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+static void chat_emit_json_string(chat_parse_t *parser, const char *ptr)
+{
+    while (*ptr && *ptr != '"')
+    {
+        uint8_t out = (uint8_t)*ptr++;
+        if (out == '\\' && *ptr)
+        {
+            char esc = *ptr++;
+            switch (esc)
+            {
+                case 'n': out = '\n'; break;
+                case 'r': out = '\r'; break;
+                case 't': out = '\t'; break;
+                case '"': out = '"'; break;
+                case '\\': out = '\\'; break;
+                case 'u':
+                    if (chat_hex_nibble(ptr[0]) >= 0 && chat_hex_nibble(ptr[1]) >= 0 &&
+                        chat_hex_nibble(ptr[2]) >= 0 && chat_hex_nibble(ptr[3]) >= 0)
+                    {
+                        ptr += 4;
+                    }
+                    out = '?';
+                    break;
+                default:
+                    out = (uint8_t)esc;
+                    break;
+            }
+        }
+        chat_queue_char(parser, parser->generation, out & 0x7f, false);
+    }
+}
+
+static void chat_extract_content(chat_parse_t *parser, const char *json)
+{
+    const char *ptr = json;
+    const char *marker = "\"content\":\"";
+    size_t marker_len = strlen(marker);
+
+    while ((ptr = strstr(ptr, marker)) != NULL)
+    {
+        ptr += marker_len;
+        chat_emit_json_string(parser, ptr);
+    }
+}
+
+static void chat_queue_response(chat_parse_t *parser, const chat_response_t *response, bool force)
+{
+    if (s_chat_response_queue && xQueueSend(s_chat_response_queue, response, 0) == pdTRUE)
+    {
+        return;
+    }
+
+    if (parser)
+    {
+        parser->response_truncated = true;
+    }
+    if (!force || !s_chat_response_queue)
+    {
+        return;
+    }
+
+    chat_response_t discarded;
+    while (xQueueSend(s_chat_response_queue, response, 0) != pdTRUE)
+    {
+        if (xQueueReceive(s_chat_response_queue, &discarded, 0) != pdTRUE)
+        {
+            return;
+        }
+    }
+}
+
+static void chat_queue_char(chat_parse_t *parser, uint32_t generation, uint8_t data, bool force)
+{
+    chat_response_t response = {
+        .generation = generation,
+        .type = CHAT_RESP_CHAR,
+        .data = data,
+    };
+    chat_queue_response(parser, &response, force);
+}
+
+static void chat_queue_text(uint32_t generation, const char *text)
+{
+    while (*text)
+    {
+        chat_queue_char(NULL, generation, (uint8_t)(*text++ & 0x7f), false);
+    }
+}
+
+static void chat_queue_text_force(uint32_t generation, const char *text)
+{
+    while (*text)
+    {
+        chat_queue_char(NULL, generation, (uint8_t)(*text++ & 0x7f), true);
+    }
+}
+
+static void chat_queue_eof(chat_parse_t *parser, uint32_t generation)
+{
+    if (parser && parser->response_truncated)
+    {
+        parser->response_truncated = false;
+        chat_queue_text_force(generation, "\nOpenAI response truncated\n");
+    }
+
+    chat_response_t response = {
+        .generation = generation,
+        .type = CHAT_RESP_EOF,
+        .data = 0,
+    };
+    chat_queue_response(parser, &response, true);
+}

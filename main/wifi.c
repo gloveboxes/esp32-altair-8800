@@ -18,8 +18,10 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
-#include "mdns.h"
 #include "altair_panel.h"
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+#include "vt100_terminal.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -39,6 +41,14 @@ static const char* TAG = "WiFi";
 
 // Delay before any connect attempt (ms)
 #define WIFI_CONNECT_DELAY_MS  800
+
+// Keep WiFi modest so it can coexist with BLE HID and the display on the
+// ESP32-S3's limited internal RAM. PSRAM holds the large app buffers, but the
+// WiFi static buffers must still come from internal RAM.
+#define WIFI_STATIC_RX_BUFFERS  8
+#define WIFI_STATIC_TX_BUFFERS  8
+#define WIFI_CACHE_TX_BUFFERS   8
+#define WIFI_MGMT_SHORT_BUFFERS 16
 
 // State variables
 static bool s_wifi_initialized = false;
@@ -160,23 +170,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                          IP2STR(&event->ip_info.ip));
                 ESP_LOGI(TAG, "Got IP address: %s", s_ip_address);
                 
-                // Show IP and hostname on front panel display
+                // Show network status on the active on-device display
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+                vt100_terminal_set_ip(s_ip_address, get_mdns_hostname());
+#else
                 altair_panel_show_ip(s_ip_address, get_mdns_hostname());
-                
-                // Initialize mDNS service
-                const char* hostname = get_mdns_hostname();
-                if (hostname) {
-                    esp_err_t mdns_err = mdns_init();
-                    if (mdns_err == ESP_OK) {
-                        mdns_hostname_set(hostname);
-                        mdns_instance_name_set("Altair 8800 Emulator");
-                        // Advertise HTTP service
-                        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-                        ESP_LOGI(TAG, "mDNS initialized: %s.local", hostname);
-                    } else {
-                        ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
-                    }
-                }
+#endif
                 
                 s_wifi_connected = true;
                 s_retry_count = 0;
@@ -232,9 +231,33 @@ bool wifi_init(void)
     s_sta_netif = esp_netif_create_default_wifi_sta();
     s_ap_netif = esp_netif_create_default_wifi_ap();
 
-    // Initialize WiFi with default config
+    // Set DHCP hostname so the AP / router shows the device by name
+    {
+        const char* hostname = get_mdns_hostname();
+        if (hostname && *hostname) {
+            esp_err_t herr = esp_netif_set_hostname(s_sta_netif, hostname);
+            if (herr == ESP_OK) {
+                ESP_LOGI(TAG, "DHCP hostname: %s", hostname);
+            } else {
+                ESP_LOGW(TAG, "esp_netif_set_hostname failed: %s", esp_err_to_name(herr));
+            }
+        }
+    }
+
+    // Initialize WiFi with a smaller internal-RAM footprint than the ESP-IDF
+    // defaults. BLE HID is already running by this point and also reserves
+    // internal memory.
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    cfg.static_rx_buf_num = WIFI_STATIC_RX_BUFFERS;
+    cfg.static_tx_buf_num = WIFI_STATIC_TX_BUFFERS;
+    cfg.cache_tx_buf_num = WIFI_CACHE_TX_BUFFERS;
+    cfg.mgmt_sbuf_num = WIFI_MGMT_SHORT_BUFFERS;
+
+    esp_err_t wifi_err = esp_wifi_init(&cfg);
+    if (wifi_err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(wifi_err));
+        return false;
+    }
 
     if (!s_connect_timer) {
         const esp_timer_create_args_t timer_args = {
@@ -255,11 +278,15 @@ bool wifi_init(void)
 
     s_wifi_initialized = true;
     ESP_LOGI(TAG, "WiFi initialized");
-    
-    // Initialize the status LED task
+
+    // Initialize the status LED task. Boards without an on-board WS2812
+    // (e.g. WAVESHARE-ESP32-S3-Touch-LCD-3.5B) skip this entirely so we don't
+    // burn a GPIO + RMT channel + task stack driving a LED that isn't there.
+#if !CONFIG_ALTAIR_BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_3_5B
     if (!status_led_init()) {
         ESP_LOGW(TAG, "Status LED initialization failed (non-critical)");
     }
+#endif
 
     return true;
 }

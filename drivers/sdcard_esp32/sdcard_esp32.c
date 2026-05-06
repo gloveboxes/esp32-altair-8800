@@ -2,8 +2,7 @@
  * @file sdcard_esp32.c
  * @brief ESP32-S3 SD card driver implementation for Altair 8800 emulator
  *
- * Uses ESP-IDF's SDMMC peripheral in the 1-bit configuration used by
- * Waveshare's ESP32-S3-RLCD-4.2 reference examples.
+ * Uses ESP-IDF's SDMMC peripheral with board-specific pin mappings.
  */
 
 #include "sdcard_esp32.h"
@@ -24,6 +23,11 @@ bool sdcard_esp32_init(void)
 {
     esp_err_t ret;
 
+    if (s_mounted) {
+        ESP_LOGI(TAG, "SD card already mounted; skipping re-init");
+        return true;
+    }
+
     ESP_LOGI(TAG, "Initializing SDMMC interface for %s...", ALTAIR_BOARD_NAME);
     ESP_LOGI(TAG, "  CLK: GPIO%d", SDMMC_PIN_CLK);
     ESP_LOGI(TAG, "  CMD: GPIO%d", SDMMC_PIN_CMD);
@@ -38,8 +42,11 @@ bool sdcard_esp32_init(void)
     // Options for mounting the filesystem
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024
+        .max_files = 4,
+        /* 0 == use the card's existing cluster size; avoids allocating a
+         * larger work area than necessary, which matters on boards without
+         * PSRAM where the LCD framebuffer competes for internal DRAM. */
+        .allocation_unit_size = 0,
     };
 
     // Configure SDMMC host

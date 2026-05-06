@@ -8,6 +8,7 @@
  * - Ports 45, 70: Utility functions (utility_io)
  * - Ports 109, 110, 114, 33, 201: HTTP file transfer (http_io) - disabled on ESP32
  * - Ports 60, 61: File transfer (files_io)
+ * - Ports 120-124: OpenAI chat (chat_io)
  */
 
 #pragma once

@@ -31,7 +31,7 @@
 //-----------------------------------------------------------------------------
 
 // Recommended display update cadence (Core 0 main loop)
-#define PANEL_UPDATE_INTERVAL_MS 33  // ~30Hz
+#define PANEL_UPDATE_INTERVAL_MS 50  // ~20Hz
 
 /**
  * @brief Initialize the front panel display

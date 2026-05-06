@@ -4,20 +4,19 @@
  *
  * Core Allocation:
  * ----------------
- * Core 0 (PRO_CPU / Default): Display and system I/O
+ * Core 0 (PRO_CPU / Default): System I/O
  *   - USB Serial JTAG terminal I/O
- *   - Front panel LCD display updates
  *   - WiFi (when enabled)
  *   - FreeRTOS system tasks
  *
  * Core 1 (APP_CPU): Altair 8800 emulation and storage
  *   - Intel 8080 instruction execution
  *   - SD card disk I/O (synchronous with emulator)
+ *   - VT100 display updates on VT100 display builds
  *   - Tight emulation loop with minimal interruption
  */
 
 #include <stdio.h>
-#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_chip_info.h"
@@ -28,8 +27,8 @@
 
 // WiFi and configuration
 #include "config.h"
-#include "wifi.h"
-#include "captive_portal.h"
+#include "bt_keyboard.h"
+#include "wifi_setup.h"
 #include "websocket_console.h"
 
 // Altair 8800 emulator includes - MUST be before FatFs includes due to naming conflicts
@@ -53,155 +52,110 @@
 #include "altair_panel.h"
 #include "panel_display.h"
 
-// VT100 terminal (ST7305 / Waveshare RLCD only)
-#if CONFIG_ALTAIR_DISPLAY_ST7305
+// VT100 terminal (Waveshare AXS15231B only)
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
 #include "vt100_terminal.h"
+#endif
+
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+#include "altair_splash.h"
 #endif
 
 // I/O port handlers
 #include "port_drivers/io_ports.h"
+#include "port_drivers/chat_io.h"
 #include "port_drivers/files_io.h"
 
 // CPU state and virtual monitor
 #include "cpu_state.h"
+#include "ansi_input.h"
 
 // ASCII mask for 7-bit terminal
 #define ASCII_MASK_7BIT 0x7F
 #define CTRL_KEY(ch) ((ch) & 0x1F)
 
 // Static disk controller reference for reset
-static disk_controller_t* g_disk_controller = NULL;
+static disk_controller_t *g_disk_controller = NULL;
 
-// Global WiFi status
-static bool g_wifi_connected = false;
-static char g_ip_address[16] = {0};
-
-// WebSocket console enable flag (set when WiFi connects)
-// Using atomic for cross-core visibility (read by Core 1, written by Core 0)
-static atomic_bool g_websocket_enabled = false;
-
-// Cached copy of g_websocket_enabled for hot path (set once after task notification)
-// Safe because: 1) Set before emulator starts, 2) Never changes after that,
-// 3) Task notification provides memory barrier ensuring visibility
-static bool s_ws_enabled_cached = false;
+// Panel checkpoint trail (written by panel task, read by emulator heartbeat).
+// Use volatile + plain int so a hung panel task can still be diagnosed.
+volatile int g_panel_checkpoint = 0;
+volatile uint32_t g_panel_checkpoint_count = 0;
+#define PANEL_CHECKPOINT(n)         \
+    do                              \
+    {                               \
+        g_panel_checkpoint = (n);   \
+        g_panel_checkpoint_count++; \
+    } while (0)
 
 // Process character through ANSI escape sequence state machine
-static uint8_t process_ansi_sequence(uint8_t ch)
+// Mirrors the Pico reference: shared ansi_input lib + monotonic_ms + terminal_postprocess.
+static uint32_t monotonic_ms(void)
 {
-    // Translate ANSI cursor sequences to the control keys CP/M expects (WordStar style).
-    enum
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+static uint8_t terminal_postprocess(uint8_t ch)
+{
+    ch &= ASCII_MASK_7BIT;
+    if (ch == 28)
     {
-        KEY_STATE_NORMAL = 0,
-        KEY_STATE_ESC,
-        KEY_STATE_ESC_BRACKET,
-        KEY_STATE_ESC_BRACKET_NUM
-    };
-
-    static uint8_t key_state = KEY_STATE_NORMAL;
-    static uint8_t pending_key = 0;
-
-    switch (key_state)
-    {
-        case KEY_STATE_NORMAL:
-            if (ch == 0x1B)
-            {
-                key_state = KEY_STATE_ESC;
-                return 0x00; // Start of escape sequence
-            }
-            if (ch == 0x7F || ch == 0x08)
-            {
-                return (uint8_t)CTRL_KEY('H'); // Map delete/backspace to Ctrl-H (0x08)
-            }
-            return ch;
-
-        case KEY_STATE_ESC:
-            if (ch == '[')
-            {
-                key_state = KEY_STATE_ESC_BRACKET;
-                return 0x00; // Control sequence introducer
-            }
-            key_state = KEY_STATE_NORMAL;
-            return ch; // Pass through unknown sequences
-
-        case KEY_STATE_ESC_BRACKET:
-            switch (ch)
-            {
-                case 'A':
-                    key_state = KEY_STATE_NORMAL;
-                    return (uint8_t)CTRL_KEY('E'); // Up -> Ctrl-E
-                case 'B':
-                    key_state = KEY_STATE_NORMAL;
-                    return (uint8_t)CTRL_KEY('X'); // Down -> Ctrl-X
-                case 'C':
-                    key_state = KEY_STATE_NORMAL;
-                    return (uint8_t)CTRL_KEY('D'); // Right -> Ctrl-D
-                case 'D':
-                    key_state = KEY_STATE_NORMAL;
-                    return (uint8_t)CTRL_KEY('S'); // Left -> Ctrl-S
-                case '2':
-                    // Insert key sends ESC[2~ - need to consume the tilde
-                    pending_key = (uint8_t)CTRL_KEY('O'); // Insert -> Ctrl-O
-                    key_state = KEY_STATE_ESC_BRACKET_NUM;
-                    return 0x00;
-                case '3':
-                    // Delete key sends ESC[3~ - need to consume the tilde
-                    pending_key = (uint8_t)CTRL_KEY('G'); // Delete -> Ctrl-G
-                    key_state = KEY_STATE_ESC_BRACKET_NUM;
-                    return 0x00;
-                default:
-                    key_state = KEY_STATE_NORMAL;
-                    return 0x00; // Ignore other sequences
-            }
-
-        case KEY_STATE_ESC_BRACKET_NUM:
-            key_state = KEY_STATE_NORMAL;
-            if (ch == '~')
-            {
-                // Return the pending key now that we've consumed the tilde
-                uint8_t result = pending_key;
-                pending_key = 0;
-                return result;
-            }
-            pending_key = 0;
-            return 0x00; // Unexpected character, ignore
+        cpu_state_toggle_mode();
+        return 0x00;
     }
-
-    key_state = KEY_STATE_NORMAL;
-    return 0x00;
+    if (ch == '\n')
+    {
+        return '\r';
+    }
+    return ch;
 }
 
 // Terminal read function - non-blocking
-// Always reads from USB Serial JTAG (WebSocket input disabled)
 static uint8_t terminal_read(void)
 {
-    uint8_t ch = 0x00;
+    // Input priority is WebSocket client, then BLE keyboard, then USB serial.
+    uint8_t ws_ch = 0;
+    if (wifi_setup_websocket_enabled() && websocket_console_try_dequeue_input(&ws_ch))
+    {
+        uint8_t ch = ansi_input_process((uint8_t)(ws_ch & ASCII_MASK_7BIT), monotonic_ms());
+        return terminal_postprocess(ch);
+    }
 
+    uint8_t bt_ch = 0;
+    if (bt_keyboard_try_dequeue_input(&bt_ch))
+    {
+        uint8_t ch = ansi_input_process((uint8_t)(bt_ch & ASCII_MASK_7BIT), monotonic_ms());
+        return terminal_postprocess(ch);
+    }
+
+    // Fall back to USB serial if neither higher-priority source has input.
     uint8_t c;
     int len = usb_serial_jtag_read_bytes(&c, 1, 0);
-    if (len > 0) {
-        ch = (uint8_t)(c & ASCII_MASK_7BIT);
-        ch = process_ansi_sequence(ch);
+    if (len > 0)
+    {
+        uint8_t ch = ansi_input_process((uint8_t)(c & ASCII_MASK_7BIT), monotonic_ms());
+        return terminal_postprocess(ch);
     }
 
-    // Check for CTRL-M (ASCII 28) - toggle CPU mode
-    if (ch == 28) {
-        cpu_state_toggle_mode();
-        return 0x00;  // Don't pass to emulator
-    }
-
-    return ch;
+    // Idle pump: drives the lone-ESC grace timer in ansi_input.
+    return terminal_postprocess(ansi_input_process(0x00, monotonic_ms()));
 }
 
 // Terminal write function
 // Sends to both WebSocket client (if connected) and USB Serial JTAG
 static void terminal_write(uint8_t c)
 {
-    c &= ASCII_MASK_7BIT;  // Take first 7 bits only
+    c &= ASCII_MASK_7BIT; // Take first 7 bits only
 
-    // Mirror output to the on-device VT100 terminal (ST7305 / Waveshare only)
-#if CONFIG_ALTAIR_DISPLAY_ST7305
+    // Mirror output to the on-device VT100 terminal.
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
     vt100_terminal_putchar(c);
 #endif
+
+    if (wifi_setup_websocket_enabled())
+    {
+        websocket_console_enqueue_output(c);
+    }
 
     // Always send to USB Serial JTAG as well
     // usb_serial_jtag_write_bytes(&c, 1, 0);
@@ -222,9 +176,9 @@ void altair_reset(void)
     {
         memset(memory, 0x00, 64 * 1024); // Clear Altair memory
         loadDiskLoader(0xFF00);          // Load disk boot loader at 0xFF00
-        i8080_reset(&cpu, terminal_read, terminal_write, sense, 
+        i8080_reset(&cpu, terminal_read, terminal_write, sense,
                     g_disk_controller, io_port_in, io_port_out);
-        i8080_examine(&cpu, 0xFF00);     // Reset to boot loader address
+        i8080_examine(&cpu, 0xFF00); // Reset to boot loader address
         bus_switches = cpu.address_bus;
     }
 }
@@ -232,247 +186,50 @@ void altair_reset(void)
 //-----------------------------------------------------------------------------
 // Emulator Task (runs on Core 1)
 //-----------------------------------------------------------------------------
-#define EMULATOR_TASK_STACK_SIZE  8192
-#define EMULATOR_TASK_PRIORITY    10    // High priority for consistent timing
+#define EMULATOR_TASK_STACK_SIZE 3072 // observed HWM ~1.9 KB; 3 KB leaves >1 KB headroom
+#define EMULATOR_TASK_PRIORITY 10     // High priority for consistent timing
 
-// Panel update task (runs on Core 0)
-#define PANEL_UPDATE_TASK_STACK_SIZE  4096
-#define PANEL_UPDATE_TASK_PRIORITY    4
-
-// Emulator task handle for startup notification
-static TaskHandle_t s_emulator_task = NULL;
-
-//-----------------------------------------------------------------------------
-// WiFi Setup
-//-----------------------------------------------------------------------------
-
-/**
- * @brief Check for config clear request during early boot
- *
- * Waits briefly for user to press 'C' to clear WiFi credentials
- * and enter captive portal mode. Press Enter to skip the wait.
- */
-static bool check_config_clear_request(void)
-{
-    printf("\nWiFi credentials found in flash storage.\n");
-    printf("Press 'C' within 5 seconds to clear config and enter AP mode...\n");
-    printf("Press Enter to skip wait and connect now.\n");
-
-    int64_t start_time = esp_timer_get_time();
-    while ((esp_timer_get_time() - start_time) < 5000000) {  // 5 seconds
-        uint8_t c;
-        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
-        if (len > 0) {
-            if (c == 'c' || c == 'C') {
-                printf("\nClearing WiFi configuration...\n");
-                config_clear();
-                return true;  // Config was cleared
-            } else if (c == '\r' || c == '\n') {
-                printf("\nSkipping wait...\n");
-                break;  // Skip remaining wait time
-            }
-        }
-    }
-    printf("\n");
-    return false;  // Config not cleared
-}
-
-static bool serial_read_line(const char *prompt, char *buffer, size_t buffer_len, bool mask_input)
-{
-    size_t length = 0;
-
-    if (!buffer || buffer_len == 0) {
-        return false;
-    }
-
-    buffer[0] = '\0';
-    printf("%s", prompt);
-
-    for (;;) {
-        uint8_t c;
-        int read_len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
-        if (read_len <= 0) {
-            continue;
-        }
-
-        if (c == '\r' || c == '\n') {
-            printf("\n");
-            buffer[length] = '\0';
-            return true;
-        }
-
-        if (c == 0x08 || c == 0x7F) {
-            if (length > 0) {
-                length--;
-                buffer[length] = '\0';
-                printf("\b \b");
-            }
-            continue;
-        }
-
-        if (c < 32 || c > 126) {
-            continue;
-        }
-
-        if (length + 1 >= buffer_len) {
-            continue;
-        }
-
-        buffer[length++] = (char)c;
-        buffer[length] = '\0';
-        printf(mask_input ? "*" : "%c", c);
-    }
-}
-
-static bool prompt_serial_wifi_credentials(char *ssid, size_t ssid_len,
-                                           char *password, size_t password_len)
-{
-    printf("\n");
-    printf("No stored WiFi credentials were found.\n");
-    printf("Enter credentials in the serial monitor, or press Enter on SSID to use captive portal instead.\n\n");
-
-    if (!serial_read_line("WiFi SSID: ", ssid, ssid_len, false)) {
-        return false;
-    }
-    if (ssid[0] == '\0') {
-        return false;
-    }
-
-    if (!serial_read_line("WiFi Password: ", password, password_len, true)) {
-        return false;
-    }
-
-    return true;
-}
-
-/**
- * @brief Initialize WiFi - connect to stored network or start captive portal
- */
-static void setup_wifi(void)
-{
-    char serial_ssid[CONFIG_SSID_MAX_LEN + 1] = {0};
-    char serial_password[CONFIG_PASSWORD_MAX_LEN + 1] = {0};
-
-    // Initialize WiFi subsystem
-    if (!wifi_init()) {
-        printf("WiFi initialization failed!\n");
-        return;
-    }
-
-    // Check for stored credentials
-    if (config_exists()) {
-        // Give user chance to clear config
-        if (check_config_clear_request()) {
-            // Config was cleared, fall through to captive portal
-        } else {
-            // Try to connect to stored network
-            printf("Connecting to WiFi...\n");
-            wifi_result_t result = wifi_connect();
-
-            if (result == WIFI_RESULT_OK) {
-                g_wifi_connected = true;
-                wifi_get_ip(g_ip_address, sizeof(g_ip_address));
-                printf("WiFi connected! IP: %s\n", g_ip_address);
-
-                const char* mdns_name = get_mdns_hostname();
-                if (mdns_name) {
-                    printf("mDNS hostname: %s.local\n", mdns_name);
-                }
-
-                // Start WebSocket server for terminal access
-                printf("Starting WebSocket terminal server...\n");
-                websocket_console_init();
-                if (websocket_console_start_server()) {
-                    printf("WebSocket server started\n");
-                    printf("Terminal page: http://%s/\n", g_ip_address);
-                    atomic_store(&g_websocket_enabled, true);
-                } else {
-                    printf("Failed to start WebSocket server\n");
-                }
-
-                return;  // Successfully connected
-            }
-
-            printf("WiFi connection failed (result=%d), starting captive portal...\n", result);
-        }
-    } else {
-        if (prompt_serial_wifi_credentials(serial_ssid, sizeof(serial_ssid),
-                                           serial_password, sizeof(serial_password))) {
-            if (config_save(serial_ssid, serial_password, NULL)) {
-                printf("Connecting to WiFi using serial-entered credentials...\n");
-                wifi_result_t result = wifi_connect();
-                if (result == WIFI_RESULT_OK) {
-                    g_wifi_connected = true;
-                    wifi_get_ip(g_ip_address, sizeof(g_ip_address));
-                    printf("WiFi connected! IP: %s\n", g_ip_address);
-
-                    const char* mdns_name = get_mdns_hostname();
-                    if (mdns_name) {
-                        printf("mDNS hostname: %s.local\n", mdns_name);
-                    }
-
-                    printf("Starting WebSocket terminal server...\n");
-                    websocket_console_init();
-                    if (websocket_console_start_server()) {
-                        printf("WebSocket server started\n");
-                        printf("Terminal page: http://%s/\n", g_ip_address);
-                        atomic_store(&g_websocket_enabled, true);
-                    } else {
-                        printf("Failed to start WebSocket server\n");
-                    }
-                    return;
-                }
-
-                printf("Serial-entered WiFi credentials did not connect (result=%d). Falling back to captive portal.\n", result);
-            } else {
-                printf("Failed to save serial-entered WiFi credentials. Falling back to captive portal.\n");
-            }
-        } else {
-            printf("No WiFi credentials configured - starting captive portal\n");
-        }
-    }
-
-    // Start captive portal for configuration
-    if (captive_portal_start()) {
-        // Show setup screen on LCD (panel may be off until WiFi connects)
-        altair_panel_show_captive_portal(CAPTIVE_PORTAL_AP_SSID, captive_portal_get_ip());
-        
-        printf("\n");
-        printf("==============================================\n");
-        printf("  WiFi Setup Mode\n");
-        printf("  Connect to: '%s'\n", CAPTIVE_PORTAL_AP_SSID);
-        printf("  Then open: http://%s/\n", captive_portal_get_ip());
-        printf("==============================================\n");
-        printf("\n");
-
-        // Run captive portal until configuration is saved (device will reboot)
-        while (captive_portal_is_running()) {
-            captive_portal_poll();
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    } else {
-        printf("Failed to start captive portal!\n");
-    }
-}
+// Panel update task. The VT100 renderer is heavy (PSRAM framebuffer + QSPI
+// DMA) so it runs on Core 0 alongside the rest of the I/O (WiFi, BT, httpd,
+// file transfer) to keep Core 1 reserved for the emulator. Priority is above
+// the I/O workers but below the IDF httpd / esp_timer so network plumbing is
+// not starved.
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+#define PANEL_UPDATE_TASK_STACK_SIZE 3072 // observed HWM ~1.4 KB
+#define PANEL_UPDATE_TASK_PRIORITY 7
+#define PANEL_UPDATE_TASK_CORE 0
+#else
+#define PANEL_UPDATE_TASK_STACK_SIZE 4096
+#define PANEL_UPDATE_TASK_PRIORITY 4
+#define PANEL_UPDATE_TASK_CORE 0
+#endif
 
 //-----------------------------------------------------------------------------
 // Emulator Task (runs on Core 1)
 //-----------------------------------------------------------------------------
 
-// Panel update task (runs on Core 0)
+// Panel update task
 static void panel_update_task(void *pvParameters)
 {
     (void)pvParameters;
 
+    printf("Panel update task started on Core %d\n", xPortGetCoreID());
+
     TickType_t last_wake = xTaskGetTickCount();
-    for (;;) {
-#if CONFIG_ALTAIR_DISPLAY_ST7305
+    for (;;)
+    {
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+        PANEL_CHECKPOINT(1); // before update_status
+        vt100_terminal_update_status(cpu.address_bus, cpu.data_bus, cpu.cpuStatus);
+        PANEL_CHECKPOINT(2); // before flush
         vt100_terminal_flush();
+        PANEL_CHECKPOINT(3); // after flush
 #else
         altair_panel_update(&cpu);
 #endif
         // If we overran the period, reset to avoid "catch-up" bursts.
-        if ((xTaskGetTickCount() - last_wake) > pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS)) {
+        if ((xTaskGetTickCount() - last_wake) > pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS))
+        {
             last_wake = xTaskGetTickCount();
         }
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
@@ -483,20 +240,11 @@ static void emulator_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    // Wait for WiFi setup to complete before starting emulator
-    printf("Emulator task waiting for WiFi setup...\n");
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    
-    // Cache websocket enabled state for hot path - safe because:
-    // 1) g_websocket_enabled is set before this notification
-    // 2) Task notification includes memory barrier ensuring visibility
-    // 3) Value never changes after emulator starts
-    s_ws_enabled_cached = atomic_load(&g_websocket_enabled);
-    
     printf("Emulator task started on Core %d\n", xPortGetCoreID());
 
     // Initialize file transfer driver (creates Core 0 socket task)
     files_io_init();
+    chat_io_init();
 
     //-------------------------------------------------------------------------
     // Initialize SD card and disk system on Core 1 (same core as emulator)
@@ -505,7 +253,8 @@ static void emulator_task(void *pvParameters)
 #ifdef SD_CARD_SUPPORT
     // Initialize SD card
     printf("Initializing SD card on Core 1...\n");
-    if (!sdcard_esp32_init()) {
+    if (!sdcard_esp32_init())
+    {
         printf("SD card initialization failed!\n");
         printf("Possible causes:\n");
         printf("  - No SD card inserted\n");
@@ -514,7 +263,7 @@ static void emulator_task(void *pvParameters)
         vTaskDelete(NULL);
         return;
     }
-    
+
     // Print SD card info
     uint64_t total_bytes = sdcard_esp32_get_total_bytes();
     uint64_t used_bytes = sdcard_esp32_get_used_bytes();
@@ -528,7 +277,8 @@ static void emulator_task(void *pvParameters)
 
     // Load disk images from SD card (4 drives: A, B, C, D)
     printf("Loading DISK_A: %s\n", DISK_A_PATH);
-    if (!esp32_sd_disk_load(0, DISK_A_PATH)) {
+    if (!esp32_sd_disk_load(0, DISK_A_PATH))
+    {
         printf("  DISK_A load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -536,7 +286,8 @@ static void emulator_task(void *pvParameters)
     printf("  DISK_A loaded successfully\n");
 
     printf("Loading DISK_B: %s\n", DISK_B_PATH);
-    if (!esp32_sd_disk_load(1, DISK_B_PATH)) {
+    if (!esp32_sd_disk_load(1, DISK_B_PATH))
+    {
         printf("  DISK_B load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -544,7 +295,8 @@ static void emulator_task(void *pvParameters)
     printf("  DISK_B loaded successfully\n");
 
     printf("Loading DISK_C: %s\n", DISK_C_PATH);
-    if (!esp32_sd_disk_load(2, DISK_C_PATH)) {
+    if (!esp32_sd_disk_load(2, DISK_C_PATH))
+    {
         printf("  DISK_C load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -552,7 +304,8 @@ static void emulator_task(void *pvParameters)
     printf("  DISK_C loaded successfully\n");
 
     printf("Loading DISK_D: %s\n", DISK_D_PATH);
-    if (!esp32_sd_disk_load(3, DISK_D_PATH)) {
+    if (!esp32_sd_disk_load(3, DISK_D_PATH))
+    {
         printf("  DISK_D load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -566,8 +319,7 @@ static void emulator_task(void *pvParameters)
         .disk_function = (port_out)esp32_sd_disk_function,
         .sector = (port_in)esp32_sd_disk_sector,
         .write = (port_out)esp32_sd_disk_write,
-        .read = (port_in)esp32_sd_disk_read
-    };
+        .read = (port_in)esp32_sd_disk_read};
 #else
     // Initialize disk controller (embedded flash disks)
     printf("Initializing disk controller...\n");
@@ -575,7 +327,8 @@ static void emulator_task(void *pvParameters)
 
     // Load CPM disk image into drive 0 (DISK_A)
     printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
-    if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len)) {
+    if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len))
+    {
         printf("  DISK_A load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -584,7 +337,8 @@ static void emulator_task(void *pvParameters)
 
     // Load BDSC disk image into drive 1 (DISK_B)
     printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
-    if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len)) {
+    if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len))
+    {
         printf("  DISK_B load failed!\n");
         vTaskDelete(NULL);
         return;
@@ -598,8 +352,7 @@ static void emulator_task(void *pvParameters)
         .disk_function = (port_out)pico_disk_function,
         .sector = (port_in)pico_disk_sector,
         .write = (port_out)pico_disk_write,
-        .read = (port_in)pico_disk_read
-    };
+        .read = (port_in)pico_disk_read};
 #endif
 
     // Store disk controller reference for reset function
@@ -611,7 +364,7 @@ static void emulator_task(void *pvParameters)
 
     // Initialize CPU
     printf("Initializing Intel 8080 CPU...\n");
-    i8080_reset(&cpu, terminal_read, terminal_write, sense, 
+    i8080_reset(&cpu, terminal_read, terminal_write, sense,
                 &disk_controller, io_port_in, io_port_out);
 
     // Set CPU to boot from disk loader at 0xFF00
@@ -625,38 +378,39 @@ static void emulator_task(void *pvParameters)
     printf("\n");
     printf("Starting Altair 8800 emulation on Core 1...\n");
     printf("========================================\n\n");
-    
+
     // Main emulation loop
-    for (;;) {
+    for (;;)
+    {
         CPU_OPERATING_MODE mode = cpu_state_get_mode();
         switch (mode)
         {
-            case CPU_RUNNING:
-                // Hot path - execute 4000 cycles before checking state again
-                for (int i = 0; i < 4000; ++i) {
-                    i8080_cycle(&cpu);
-                }
-                break;
-                
-            case CPU_STOPPED:
+        case CPU_RUNNING:
+            // Hot path - execute 4000 cycles before checking state again
+            for (int i = 0; i < 4000; ++i)
             {
-                // CPU stopped - poll for monitor commands from WebSocket
-                uint8_t ch;
-                if (websocket_console_try_dequeue_input(&ch) && ch != 0x00) {
-                    // Check for CTRL-M (ASCII 28) to toggle back to running mode
-                    if (ch == 28) {
-                        cpu_state_toggle_mode();
-                    } else {
-                        process_control_panel_commands_char(ch);
-                    }
-                }
-                vTaskDelay(1);  // Yield when stopped
-                break;
+                i8080_cycle(&cpu);
             }
-                
-            default:
-                vTaskDelay(1);
-                break;
+            break;
+
+        case CPU_STOPPED:
+        {
+            // Reuse terminal_read() so the monitor sees the same WS→BT→USB
+            // priority and ANSI/Ctrl-M handling as the running CPU.
+            // terminal_postprocess() converts Ctrl-M (28) into a mode
+            // toggle and returns 0, so any non-zero byte is monitor input.
+            uint8_t ch = terminal_read();
+            if (ch != 0x00)
+            {
+                process_control_panel_commands_char(ch);
+            }
+            vTaskDelay(1); // Yield when stopped
+            break;
+        }
+
+        default:
+            vTaskDelay(1);
+            break;
         }
     }
 }
@@ -665,8 +419,8 @@ void app_main(void)
 {
     // Initialize USB Serial JTAG driver for non-blocking terminal I/O
     usb_serial_jtag_driver_config_t usb_config = {
-        .rx_buffer_size = 128,   // Single-char input, just need small queue
-        .tx_buffer_size = 128,   // Single-char output, just need small queue
+        .rx_buffer_size = 128, // Single-char input, just need small queue
+        .tx_buffer_size = 128, // Single-char output, just need small queue
     };
     usb_serial_jtag_driver_install(&usb_config);
 
@@ -683,45 +437,61 @@ void app_main(void)
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     printf("Chip: ESP32-S3 with %d CPU core(s)\n", chip_info.cores);
-    printf("Core 0: Display, terminal I/O, WiFi\n");
-    printf("Core 1: Emulation, SD card I/O\n");
-    
+    printf("Core 0: terminal I/O, WiFi\n");
+    printf("Core 1: Emulation, SD card I/O, VT100 display\n");
+
     uint32_t flash_size;
-    if (esp_flash_get_size(NULL, &flash_size) == ESP_OK) {
+    if (esp_flash_get_size(NULL, &flash_size) == ESP_OK)
+    {
         printf("Flash size: %lu MB\n", flash_size / (1024 * 1024));
     }
-    
+
     // Memory stats
     printf("\nMemory:\n");
     printf("  Free heap:     %lu bytes\n", (unsigned long)esp_get_free_heap_size());
     printf("  Min free heap: %lu bytes\n", (unsigned long)esp_get_minimum_free_heap_size());
     size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    if (psram_free > 0) {
+    if (psram_free > 0)
+    {
         printf("  PSRAM free:    %lu bytes\n", (unsigned long)psram_free);
     }
     printf("\n");
 
     // Initialize configuration (NVS storage)
     printf("Initializing configuration...\n");
-    config_init();
+    altair_config_init();
 
-    // Initialize front panel display on Core 0
-    printf("Initializing display on Core 0...\n");
-#if CONFIG_ALTAIR_DISPLAY_ST7305
-    // Waveshare RLCD: initialise hardware then switch straight to VT100 mode.
+#ifdef SD_CARD_SUPPORT
+    // Mount SD card BEFORE the LCD framebuffer is allocated. The SDMMC
+    // controller's DMA descriptors must come from internal DRAM, and the
+    // 480x160x2 framebuffer is large enough to starve that pool when
+    // PSRAM is disabled. Subsequent calls to sdcard_esp32_init() are no-ops.
+    printf("Mounting SD card early (pre-display)...\n");
+    if (!sdcard_esp32_init())
+    {
+        printf("Early SD card mount failed; will retry from emulator task.\n");
+    }
+#endif
+
+    // Initialize front panel display hardware
+    printf("Initializing display hardware...\n");
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+    // AXS15231B display: initialise hardware then switch straight to VT100 mode.
     // The front-panel LED layout is not shown; the display acts as a text terminal.
     panel_display_init();
     vt100_terminal_init();
+    altair_splash_show();
+    int64_t splash_shown_us = esp_timer_get_time();
     printf("VT100 terminal ready: %d cols x %d rows\n", VT100_COLS, VT100_ROWS);
 #else
     altair_panel_init();
-    printf("Running display DMA test before emulator startup...\n");
-    altair_panel_run_startup_test(2000);
+#if CONFIG_ALTAIR_DISPLAY_ILI9341
     // Keep backlight off during WiFi connect to reduce cold-boot power draw
     altair_panel_set_backlight(0);
 #endif
+#endif
 
-    // Start panel update task on Core 0
+    // Start panel update task
     xTaskCreatePinnedToCore(
         panel_update_task,
         "panel_update",
@@ -729,10 +499,33 @@ void app_main(void)
         NULL,
         PANEL_UPDATE_TASK_PRIORITY,
         NULL,
-        0  // Pin to Core 0
-    );
-    
-    // Start emulator task on Core 1 (will wait for WiFi setup)
+        PANEL_UPDATE_TASK_CORE);
+
+    bt_keyboard_init();
+    config_run_boot_shell();
+
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+    // Ensure the splash is visible for at least 5 seconds total, even if the
+    // BT boot shell returned immediately (e.g. no serial monitor attached).
+    const int64_t SPLASH_MIN_US = 5 * 1000 * 1000;
+    int64_t elapsed_us = esp_timer_get_time() - splash_shown_us;
+    if (elapsed_us < SPLASH_MIN_US)
+    {
+        vTaskDelay(pdMS_TO_TICKS((SPLASH_MIN_US - elapsed_us) / 1000));
+    }
+
+    // Splash done - clear display so the emulator boot output starts on a
+    // blank terminal. Re-initialising the VT100 here would race with the
+    // panel_update_task that is already running on Core 0, so just emit a
+    // CSI 2J / CSI H clear+home through the normal putchar mutex path.
+    static const char *clear_seq = "\x1b[0m\x1b[2J\x1b[H\x1b[?25h";
+    for (const char *p = clear_seq; *p; ++p)
+    {
+        vt100_terminal_putchar((uint8_t)*p);
+    }
+#endif
+
+    // Start emulator task on Core 1 immediately; WiFi comes up independently.
     printf("Starting emulator task on Core 1...\n");
     xTaskCreatePinnedToCore(
         emulator_task,
@@ -740,19 +533,13 @@ void app_main(void)
         EMULATOR_TASK_STACK_SIZE,
         NULL,
         EMULATOR_TASK_PRIORITY,
-        &s_emulator_task,
-        1  // Pin to Core 1
+        NULL,
+        1 // Pin to Core 1
     );
 
-    // Setup WiFi (may start captive portal if no credentials)
-    // This blocks until WiFi is connected or captive portal exits
-    setup_wifi();
-
-    // Signal emulator to start using task notification
-    printf("WiFi setup complete, starting emulator...\n");
-    if (s_emulator_task) {
-        xTaskNotifyGive(s_emulator_task);
-    }
+    // Setup WiFi asynchronously; the VT100 status bar is updated by WiFi events
+    // when an IP address or captive portal address becomes available.
+    wifi_setup_start();
 
     // app_main() can return - FreeRTOS scheduler continues running other tasks
     // The main task is automatically deleted by ESP-IDF when this function returns

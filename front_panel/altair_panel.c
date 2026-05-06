@@ -25,6 +25,8 @@ static uint16_t last_status = 0;
 static uint16_t last_address = 0;
 static uint8_t last_data = 0;
 static bool panel_initialized = false;
+static char s_ip_addr[16] = {0};
+static char s_hostname[32] = {0};
 
 typedef struct {
     int led_size;
@@ -89,12 +91,12 @@ static void configure_layout_and_theme(void)
         s_layout.led_label_offset_y = 2;
         s_layout.x_text_left = 2;
         s_layout.x_text_right_margin = 2;
-        s_layout.y_title = 5;
-        s_layout.y_status = 35;
-        s_layout.y_address = 100;
-        s_layout.y_data = 170;
+        s_layout.y_title = 2;
+        s_layout.y_status = 22;
+        s_layout.y_address = 78;
+        s_layout.y_data = 130;
         s_layout.x_address_start = 2;
-        s_layout.y_ip_address = 220;
+        s_layout.y_ip_address = 162;
 
         s_theme.background = 0x18C8;
         s_theme.led_on = PANEL_COLOR_RED;
@@ -136,8 +138,8 @@ static void draw_centered_small_text(int y, const char *text, panel_color_t fg, 
 
 static void draw_startup_test_frame(uint32_t counter, uint32_t elapsed_ms, uint32_t frames)
 {
-    panel_color_t bg = s_theme.text_primary;   // black on RLCD
-    panel_color_t fg = s_theme.background;     // white on RLCD
+    panel_color_t bg = s_theme.text_primary;
+    panel_color_t fg = s_theme.background;
     char line[64];
     int w = panel_display_width();
     int h = panel_display_height();
@@ -306,11 +308,7 @@ static void draw_static_elements(void)
     // Title
     panel_display_draw_string(s_layout.x_text_left, s_layout.y_title,
                               "ALTAIR 8800", s_theme.text_primary, s_theme.background, 2);
-    panel_display_draw_string(panel_display_is_monochrome()
-                                  ? right_align_title_x("RLCD ST7305")
-                                  : 180,
-                              s_layout.y_title,
-                              panel_display_is_monochrome() ? "RLCD ST7305" : "ESP32-S3",
+    panel_display_draw_string(180, s_layout.y_title, "ESP32-S3",
                               s_theme.title_accent, s_theme.background, 1);
     
     // STATUS section
@@ -331,9 +329,6 @@ static void draw_static_elements(void)
     panel_display_fill_rect(0, s_layout.y_data - 5, panel_display_width(), 2, s_theme.text_primary);
     draw_data_labels();
 
-    panel_display_present();
-    
-    ESP_LOGI(TAG, "Static elements drawn");
 }
 
 /**
@@ -352,7 +347,51 @@ static void draw_all_leds(uint16_t status, uint16_t address, uint8_t data)
     panel_display_draw_led_row(data, 8, s_layout.x_data_start, s_layout.y_data,
                                s_layout.led_size, s_layout.led_spacing_data,
                                s_theme.led_on, s_theme.led_off, s_theme.background);
-    panel_display_present();
+}
+
+static void draw_ip_line(void)
+{
+    if (s_ip_addr[0] == '\0') {
+        return;
+    }
+
+    panel_display_fill_rect(0, s_layout.y_ip_address, panel_display_width(), 15, s_theme.background);
+
+    char display_str[72];
+    if (s_hostname[0] != '\0') {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s | %s", s_ip_addr, s_hostname);
+    } else {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s", s_ip_addr);
+    }
+
+    panel_display_draw_string_small(s_layout.x_text_left, s_layout.y_ip_address, display_str,
+                                    s_theme.text_primary, s_theme.background);
+}
+
+static void draw_full_panel(uint16_t status, uint16_t address, uint8_t data)
+{
+    draw_static_elements();
+    draw_all_leds(status, address, data);
+    draw_ip_line();
+}
+
+static void present_full_panel(uint16_t status, uint16_t address, uint8_t data)
+{
+    if (!panel_display_is_banded()) {
+        draw_full_panel(status, address, data);
+        panel_display_present();
+        return;
+    }
+
+    int band_h = panel_display_band_height();
+    int band_limit = panel_display_bands_are_vertical() ? panel_display_width() : panel_display_height();
+    for (int y = 0; y < band_limit; y += band_h) {
+        int h = band_limit - y;
+        if (h > band_h) h = band_h;
+        panel_display_begin_band(y, h);
+        draw_full_panel(status, address, data);
+        panel_display_present();
+    }
 }
 
 /**
@@ -402,16 +441,12 @@ bool altair_panel_init(void)
         return false;
     }
     
-    // Draw static elements
-    draw_static_elements();
-    
     // Initialize tracking state to 0
     last_status = 0;
     last_address = 0;
     last_data = 0;
-    
-    // Draw initial LED state (all off)
-    draw_all_leds(0, 0, 0);
+
+    present_full_panel(0, 0, 0);
     
     panel_initialized = true;
     ESP_LOGI(TAG, "Panel initialized successfully");
@@ -445,8 +480,7 @@ void altair_panel_run_startup_test(uint32_t duration_ms)
     ESP_LOGI(TAG, "Startup panel test complete: %lu frames in %lu ms", (unsigned long)frames,
              (unsigned long)duration_ms);
 
-    draw_static_elements();
-    draw_all_leds(0, 0, 0);
+    present_full_panel(0, 0, 0);
 }
 
 void altair_panel_update(const intel8080_t *cpu)
@@ -462,8 +496,12 @@ void altair_panel_update(const intel8080_t *cpu)
     
     // Only update if something changed
     if (cur_status != last_status || cur_address != last_address || cur_data != last_data) {
-        update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
-        
+        if (panel_display_is_banded()) {
+            present_full_panel(cur_status, cur_address, cur_data);
+        } else {
+            update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
+        }
+
         last_status = cur_status;
         last_address = cur_address;
         last_data = cur_data;
@@ -485,20 +523,19 @@ void altair_panel_show_ip(const char *ip_addr, const char *hostname)
     // Bring panel to normal brightness once WiFi is connected and IP is known
     panel_display_set_backlight(80);
 
-    // Clear the entire bottom line
-    panel_display_fill_rect(0, s_layout.y_ip_address, panel_display_width(), 15, s_theme.background);
-    
-    // Build display string: "WIFI: IP | hostname.local"
-    char display_str[72];
+    snprintf(s_ip_addr, sizeof(s_ip_addr), "%s", ip_addr);
     if (hostname) {
-        snprintf(display_str, sizeof(display_str), "WIFI: %s | %s.local", ip_addr, hostname);
+        snprintf(s_hostname, sizeof(s_hostname), "%s", hostname);
     } else {
-        snprintf(display_str, sizeof(display_str), "WIFI: %s", ip_addr);
+        s_hostname[0] = '\0';
     }
-    
-    // Align the WiFi status text with the left edge of the main title.
-    panel_display_draw_string_small(s_layout.x_text_left, s_layout.y_ip_address, display_str,
-                                    s_theme.text_primary, s_theme.background);
+
+    if (panel_display_is_banded()) {
+        present_full_panel(last_status, last_address, last_data);
+        return;
+    }
+
+    draw_ip_line();
     panel_display_present();
 }
 
@@ -507,31 +544,44 @@ void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip
     if (!panel_initialized) {
         return;
     }
-    
+
+    int passes = panel_display_is_banded()
+                     ? (panel_display_bands_are_vertical() ? panel_display_width() : panel_display_height())
+                     : 1;
+    int band_h = panel_display_is_banded() ? panel_display_band_height() : panel_display_height();
+
+    for (int band_y = 0; band_y < passes; band_y += band_h) {
+        if (panel_display_is_banded()) {
+            int h = panel_display_height() - band_y;
+            if (h > band_h) h = band_h;
+            panel_display_begin_band(band_y, h);
+        }
+
     // Clear entire screen
     panel_display_fill_screen(s_theme.background);
-    
+
     // Draw border lines
     panel_display_fill_rect(10, 50, panel_display_width() - 20, 2, s_theme.text_primary);
     panel_display_fill_rect(10, 180, panel_display_width() - 20, 2, s_theme.text_primary);
-    
+
     // Title - using small font, centered (6 pixels per char)
     const char *title = "WIFI SETUP MODE";
     int title_x = (panel_display_width() - (strlen(title) * 6)) / 2;
     panel_display_draw_string_small(title_x, 80, title, s_theme.text_primary, s_theme.background);
-    
+
     // Instructions using small font
     char line1[48];
     char line2[48];
     snprintf(line1, sizeof(line1), "CONNECT TO: %s", ap_ssid ? ap_ssid : "Altair8800-Setup");
     snprintf(line2, sizeof(line2), "THEN OPEN: HTTP://%s/", portal_ip ? portal_ip : "192.168.4.1");
-    
+
     int line1_x = (panel_display_width() - (strlen(line1) * 6)) / 2;
     int line2_x = (panel_display_width() - (strlen(line2) * 6)) / 2;
-    
+
     panel_display_draw_string_small(line1_x, 110, line1, s_theme.title_accent, s_theme.background);
     panel_display_draw_string_small(line2_x, 140, line2, s_theme.title_accent, s_theme.background);
     panel_display_present();
+    }
 }
 
 void altair_panel_set_backlight(int brightness)
