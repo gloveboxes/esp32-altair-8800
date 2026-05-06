@@ -3,6 +3,10 @@
 #include "altair_panel.h"
 #include "i8080_disasm.h"
 #include "virtual_monitor.h"
+#include "sdkconfig.h"
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+#include "vt100_terminal.h"
+#endif
 #include <ctype.h>
 #include <stdio.h>
 
@@ -97,6 +101,11 @@ void process_control_panel_commands_char(uint8_t ch)
             websocket_console_enqueue_output(ch);  // Echo backspace
             websocket_console_enqueue_output(' '); // Echo space to erase character
             websocket_console_enqueue_output(ch);  // Echo backspace again
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+            vt100_terminal_putchar(ch);
+            vt100_terminal_putchar(' ');
+            vt100_terminal_putchar(ch);
+#endif
         }
         // If command_buffer_length == 0, do nothing (don't echo)
     }
@@ -110,6 +119,9 @@ void process_control_panel_commands_char(uint8_t ch)
 
             // Echo the character back to the terminal
             websocket_console_enqueue_output(ch);
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+            vt100_terminal_putchar(ch);
+#endif
         }
     }
 }

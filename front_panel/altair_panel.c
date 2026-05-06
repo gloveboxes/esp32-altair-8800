@@ -2,13 +2,13 @@
  * @file altair_panel.c
  * @brief Altair 8800 Front Panel Display for ESP32-S3
  * 
- * Displays CPU state on ILI9341 LCD using direct-write (no framebuffer).
+ * Displays CPU state on the selected panel backend.
  * Display updates run on Core 0 at ~30Hz refresh rate.
  * Only redraws LEDs that have changed state for efficiency.
  */
 
 #include "altair_panel.h"
-#include "ili9341.h"
+#include "panel_display.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -25,34 +25,163 @@ static uint16_t last_status = 0;
 static uint16_t last_address = 0;
 static uint8_t last_data = 0;
 static bool panel_initialized = false;
+static char s_ip_addr[16] = {0};
+static char s_hostname[32] = {0};
 
-//-----------------------------------------------------------------------------
-// Layout constants (matching Pico reference implementation)
-//-----------------------------------------------------------------------------
-#define LED_SIZE            15
-#define LED_SPACING_STATUS  32
-#define LED_SPACING_ADDRESS 20
-#define LED_SPACING_DATA    20
+typedef struct {
+    int led_size;
+    int led_spacing_status;
+    int led_spacing_address;
+    int led_spacing_data;
+    int led_label_offset_y;
+    int x_text_left;
+    int x_text_right_margin;
+    int y_title;
+    int y_status;
+    int y_address;
+    int y_data;
+    int x_status_start;
+    int x_address_start;
+    int x_data_start;
+    int y_ip_address;
+} panel_layout_t;
 
-// Y positions for each section
-#define Y_STATUS    35
-#define Y_ADDRESS   100
-#define Y_DATA      170
+typedef struct {
+    panel_color_t background;
+    panel_color_t led_on;
+    panel_color_t led_off;
+    panel_color_t text_primary;
+    panel_color_t text_secondary;
+    panel_color_t title_accent;
+} panel_theme_t;
 
-// X positions
-#define X_STATUS_START    8
-#define X_ADDRESS_START   2
-#define X_DATA_START      162
+static panel_layout_t s_layout;
+static panel_theme_t s_theme;
 
-// Colors
-#define LED_ON_COLOR      COLOR_RED
-#define LED_OFF_COLOR     0x2000      // Dark red (RGB565: R=4, G=0, B=0)
-#define TEXT_WHITE        COLOR_WHITE
-#define TEXT_GRAY         0xC618      // Light gray
+static void configure_layout_and_theme(void)
+{
+    const int led_rows_shift_x = 4;
+
+    if (panel_display_is_monochrome()) {
+        s_layout.led_size = 18;
+        s_layout.led_spacing_status = 39;
+        s_layout.led_spacing_address = 24;
+        s_layout.led_spacing_data = 24;
+        s_layout.led_label_offset_y = 26;
+        s_layout.x_text_left = 10;
+        s_layout.x_text_right_margin = 12;
+        s_layout.y_title = 12;
+        s_layout.y_status = 60;
+        s_layout.y_address = 144;
+        s_layout.y_data = 216;
+        s_layout.x_address_start = 8;
+        s_layout.y_ip_address = panel_display_height() - 24;
+
+        s_theme.background = PANEL_COLOR_WHITE;
+        s_theme.led_on = PANEL_COLOR_BLACK;
+        s_theme.led_off = PANEL_COLOR_WHITE;
+        s_theme.text_primary = PANEL_COLOR_BLACK;
+        s_theme.text_secondary = PANEL_COLOR_BLACK;
+        s_theme.title_accent = PANEL_COLOR_BLACK;
+    } else {
+        s_layout.led_size = 15;
+        s_layout.led_spacing_status = 32;
+        s_layout.led_spacing_address = 20;
+        s_layout.led_spacing_data = 20;
+        s_layout.led_label_offset_y = 2;
+        s_layout.x_text_left = 2;
+        s_layout.x_text_right_margin = 2;
+        s_layout.y_title = 2;
+        s_layout.y_status = 22;
+        s_layout.y_address = 78;
+        s_layout.y_data = 130;
+        s_layout.x_address_start = 2;
+        s_layout.y_ip_address = 162;
+
+        s_theme.background = 0x18C8;
+        s_theme.led_on = PANEL_COLOR_RED;
+        s_theme.led_off = 0x3000;
+        s_theme.text_primary = 0xEF5D;
+        s_theme.text_secondary = 0xBDF7;
+        s_theme.title_accent = 0xD69A;
+    }
+
+    int address_right_led_x = s_layout.x_address_start + (15 * s_layout.led_spacing_address);
+    s_layout.x_status_start = address_right_led_x - (9 * s_layout.led_spacing_status);
+    s_layout.x_data_start = address_right_led_x - (7 * s_layout.led_spacing_data);
+
+    s_layout.x_status_start += led_rows_shift_x;
+    s_layout.x_address_start += led_rows_shift_x;
+    s_layout.x_data_start += led_rows_shift_x;
+}
 
 //-----------------------------------------------------------------------------
 // Panel drawing functions
 //-----------------------------------------------------------------------------
+
+static int right_align_title_x(const char *title)
+{
+    int width = (int)strlen(title) * 8;
+    int x = (panel_display_width() - s_layout.x_text_right_margin) - width;
+    return (x < 0) ? 0 : x;
+}
+
+static void draw_centered_small_text(int y, const char *text, panel_color_t fg, panel_color_t bg)
+{
+    int width = (int)strlen(text) * 6;
+    int x = (panel_display_width() - width) / 2;
+    if (x < 0) {
+        x = 0;
+    }
+    panel_display_draw_string_small(x, y, text, fg, bg);
+}
+
+static void draw_startup_test_frame(uint32_t counter, uint32_t elapsed_ms, uint32_t frames)
+{
+    panel_color_t bg = s_theme.text_primary;
+    panel_color_t fg = s_theme.background;
+    char line[64];
+    int w = panel_display_width();
+    int h = panel_display_height();
+
+    // Full-screen clear every frame so the entire framebuffer is pushed via DMA
+    panel_display_fill_screen(bg);
+
+    // Moving vertical bar (20 px wide, wraps across the screen)
+    int bar_x = (int)((counter * 4) % (uint32_t)w);
+    int bar_w = 20;
+    if (bar_x + bar_w > w) {
+        panel_display_fill_rect(bar_x, 0, w - bar_x, h, fg);
+        panel_display_fill_rect(0, 0, bar_w - (w - bar_x), h, fg);
+    } else {
+        panel_display_fill_rect(bar_x, 0, bar_w, h, fg);
+    }
+
+    // Title row
+    draw_centered_small_text(2, "DISPLAY DMA TEST", fg, bg);
+
+    // 20 rows of counter text filling the screen
+    int row_height = (h - 20) / 20;  // leave space for title and bottom stats
+    for (int row = 0; row < 20; row++) {
+        int y = 12 + row * row_height;
+        snprintf(line, sizeof(line), "%02d: FRAME %lu", row, (unsigned long)counter);
+        panel_display_draw_string_small(s_layout.x_text_left, y, line, fg, bg);
+    }
+
+    // FPS and elapsed at the bottom
+    if (elapsed_ms > 0) {
+        uint32_t fps_times_10 = (frames * 10000U) / elapsed_ms;
+        snprintf(line, sizeof(line), "PUSH %lu.%lu FPS  ELAPSED %lu MS",
+                 (unsigned long)(fps_times_10 / 10U),
+                 (unsigned long)(fps_times_10 % 10U),
+                 (unsigned long)elapsed_ms);
+    } else {
+        snprintf(line, sizeof(line), "PUSH 0.0 FPS  ELAPSED 0 MS");
+    }
+    draw_centered_small_text(h - 10, line, fg, bg);
+
+    panel_display_present();
+}
 
 static bool update_led_row_span(uint32_t new_bits, uint32_t old_bits, int num_leds,
                                 int x_start, int y, int spacing)
@@ -68,10 +197,104 @@ static bool update_led_row_span(uint32_t new_bits, uint32_t old_bits, int num_le
     if (left >= num_leds) left = num_leds - 1;
     if (right < 0) right = 0;
 
-    ili9341_draw_led_span(new_bits, num_leds, x_start, y,
-                          LED_SIZE, spacing, LED_ON_COLOR, LED_OFF_COLOR,
-                          left, right);
+    panel_display_draw_led_span(new_bits, num_leds, x_start, y,
+                                s_layout.led_size, spacing, s_theme.led_on,
+                                s_theme.led_off, s_theme.background, left, right);
     return true;
+}
+
+static void draw_status_labels(void)
+{
+    const char *status_labels[] = {"INT", "WO", "STCK", "HLTA", "OUT", "M1", "INP", "MEMR", "PROT", "INTE"};
+    int status_led_center_offset = s_layout.led_size / 2;
+    int x = s_layout.x_status_start;
+
+    for (int i = 9; i >= 0; i--) {
+        int label_width = (int)strlen(status_labels[i]) * 6;
+        int label_x = x + status_led_center_offset - (label_width / 2);
+        panel_display_draw_string_small(label_x, s_layout.y_status + s_layout.led_label_offset_y,
+                                        status_labels[i], s_theme.text_secondary,
+                                        s_theme.background);
+        x += s_layout.led_spacing_status;
+    }
+}
+
+static void draw_address_labels(void)
+{
+    int x = s_layout.x_address_start;
+
+    for (int i = 15; i >= 0; i--) {
+        char label[4];
+        if (i >= 10) {
+            snprintf(label, sizeof(label), "%d", i);
+        } else {
+            snprintf(label, sizeof(label), " %d", i);
+        }
+        panel_display_draw_string_small(x + 2, s_layout.y_address + s_layout.led_label_offset_y,
+                                        label, s_theme.text_secondary, s_theme.background);
+        x += s_layout.led_spacing_address;
+    }
+}
+
+static void draw_data_labels(void)
+{
+    int data_label_offset_x = (s_layout.led_size - 6) / 2;
+    int x = s_layout.x_data_start;
+
+    for (int i = 7; i >= 0; i--) {
+        char label[3];
+        snprintf(label, sizeof(label), "%d", i);
+        panel_display_draw_string_small(x + data_label_offset_x,
+                                        s_layout.y_data + s_layout.led_label_offset_y,
+                                        label, s_theme.text_secondary, s_theme.background);
+        x += s_layout.led_spacing_data;
+    }
+}
+
+static int led_rows_band_left(void)
+{
+    return s_layout.x_status_start - 4;
+}
+
+static int led_rows_band_width(void)
+{
+    int rightmost_led_x = s_layout.x_address_start + (15 * s_layout.led_spacing_address);
+    return (rightmost_led_x + s_layout.led_size + 4) - led_rows_band_left();
+}
+
+static int led_rows_band_height(void)
+{
+    int height = s_layout.led_label_offset_y + 7;
+    return (height > s_layout.led_size) ? height : s_layout.led_size;
+}
+
+static void redraw_monochrome_led_rows(uint16_t status, uint16_t address, uint8_t data)
+{
+    int band_left = led_rows_band_left();
+    int band_width = led_rows_band_width();
+    int band_height = led_rows_band_height();
+
+    panel_display_fill_rect(band_left, s_layout.y_status, band_width, band_height,
+                            s_theme.background);
+    panel_display_fill_rect(band_left, s_layout.y_address, band_width, band_height,
+                            s_theme.background);
+    panel_display_fill_rect(band_left, s_layout.y_data, band_width, band_height,
+                            s_theme.background);
+
+    draw_status_labels();
+    draw_address_labels();
+    draw_data_labels();
+
+    panel_display_draw_led_row(status, 10, s_layout.x_status_start, s_layout.y_status,
+                               s_layout.led_size, s_layout.led_spacing_status,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+    panel_display_draw_led_row(address, 16, s_layout.x_address_start, s_layout.y_address,
+                               s_layout.led_size, s_layout.led_spacing_address,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+    panel_display_draw_led_row(data, 8, s_layout.x_data_start, s_layout.y_data,
+                               s_layout.led_size, s_layout.led_spacing_data,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+    panel_display_present();
 }
 
 /**
@@ -80,55 +303,32 @@ static bool update_led_row_span(uint32_t new_bits, uint32_t old_bits, int num_le
 static void draw_static_elements(void)
 {
     // Clear screen
-    ili9341_fill_screen(COLOR_BLACK);
+    panel_display_fill_screen(s_theme.background);
     
     // Title
-    ili9341_draw_string(2, 5, "ALTAIR 8800", COLOR_CYAN, COLOR_BLACK, 2);
-    ili9341_draw_string(180, 5, "ESP32-S3", COLOR_WHITE, COLOR_BLACK, 1);
+    panel_display_draw_string(s_layout.x_text_left, s_layout.y_title,
+                              "ALTAIR 8800", s_theme.text_primary, s_theme.background, 2);
+    panel_display_draw_string(180, s_layout.y_title, "ESP32-S3",
+                              s_theme.title_accent, s_theme.background, 1);
     
     // STATUS section
-    ili9341_draw_string(270, Y_STATUS - 15, "STATUS", TEXT_WHITE, COLOR_BLACK, 1);
-    ili9341_fill_rect(0, Y_STATUS - 5, LCD_H_RES, 2, TEXT_WHITE);
-    
-    // Status labels - using smaller font to fit
-    const char *status_labels[] = {"INT", "WO", "STCK", "HLTA", "OUT", "M1", "INP", "MEMR", "PROT", "INTE"};
-    int x = X_STATUS_START;
-    for (int i = 9; i >= 0; i--) {
-        ili9341_draw_string_small(x, Y_STATUS + LED_SIZE + 2, status_labels[i], TEXT_GRAY, COLOR_BLACK);
-        x += LED_SPACING_STATUS;
-    }
+    panel_display_draw_string(right_align_title_x("STATUS"), s_layout.y_status - 15,
+                              "STATUS", s_theme.text_primary, s_theme.background, 1);
+    panel_display_fill_rect(0, s_layout.y_status - 5, panel_display_width(), 2, s_theme.text_primary);
+    draw_status_labels();
     
     // ADDRESS section
-    ili9341_draw_string(264, Y_ADDRESS - 15, "ADDRESS", TEXT_WHITE, COLOR_BLACK, 1);
-    ili9341_fill_rect(0, Y_ADDRESS - 5, LCD_H_RES, 2, TEXT_WHITE);
-    
-    // Address labels (15-0) - using smaller font
-    x = X_ADDRESS_START;
-    for (int i = 15; i >= 0; i--) {
-        char label[4];
-        if (i >= 10) {
-            snprintf(label, sizeof(label), "%d", i);
-        } else {
-            snprintf(label, sizeof(label), " %d", i);
-        }
-        ili9341_draw_string_small(x + 2, Y_ADDRESS + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
-        x += LED_SPACING_ADDRESS;
-    }
+    panel_display_draw_string(right_align_title_x("ADDRESS"), s_layout.y_address - 15,
+                              "ADDRESS", s_theme.text_primary, s_theme.background, 1);
+    panel_display_fill_rect(0, s_layout.y_address - 5, panel_display_width(), 2, s_theme.text_primary);
+    draw_address_labels();
     
     // DATA section
-    ili9341_draw_string(282, Y_DATA - 15, "DATA", TEXT_WHITE, COLOR_BLACK, 1);
-    ili9341_fill_rect(0, Y_DATA - 5, LCD_H_RES, 2, TEXT_WHITE);
-    
-    // Data labels (7-0) - using smaller font
-    x = X_DATA_START;
-    for (int i = 7; i >= 0; i--) {
-        char label[3];
-        snprintf(label, sizeof(label), "%d", i);
-        ili9341_draw_string_small(x + 8, Y_DATA + LED_SIZE + 2, label, TEXT_GRAY, COLOR_BLACK);
-        x += LED_SPACING_DATA;
-    }
-    
-    ESP_LOGI(TAG, "Static elements drawn");
+    panel_display_draw_string(right_align_title_x("DATA"), s_layout.y_data - 15,
+                              "DATA", s_theme.text_primary, s_theme.background, 1);
+    panel_display_fill_rect(0, s_layout.y_data - 5, panel_display_width(), 2, s_theme.text_primary);
+    draw_data_labels();
+
 }
 
 /**
@@ -138,14 +338,60 @@ static void draw_all_leds(uint16_t status, uint16_t address, uint8_t data)
 {
     // Draw entire rows at once using async DMA with double buffering
     // Each call starts DMA while preparing next row in alternate buffer
-    ili9341_draw_led_row(status, 10, X_STATUS_START, Y_STATUS, 
-                         LED_SIZE, LED_SPACING_STATUS, LED_ON_COLOR, LED_OFF_COLOR);
-    ili9341_draw_led_row(address, 16, X_ADDRESS_START, Y_ADDRESS,
-                         LED_SIZE, LED_SPACING_ADDRESS, LED_ON_COLOR, LED_OFF_COLOR);
-    ili9341_draw_led_row(data, 8, X_DATA_START, Y_DATA,
-                         LED_SIZE, LED_SPACING_DATA, LED_ON_COLOR, LED_OFF_COLOR);
-    // Wait for final DMA transfer to complete
-    ili9341_wait_async();
+    panel_display_draw_led_row(status, 10, s_layout.x_status_start, s_layout.y_status,
+                               s_layout.led_size, s_layout.led_spacing_status,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+    panel_display_draw_led_row(address, 16, s_layout.x_address_start, s_layout.y_address,
+                               s_layout.led_size, s_layout.led_spacing_address,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+    panel_display_draw_led_row(data, 8, s_layout.x_data_start, s_layout.y_data,
+                               s_layout.led_size, s_layout.led_spacing_data,
+                               s_theme.led_on, s_theme.led_off, s_theme.background);
+}
+
+static void draw_ip_line(void)
+{
+    if (s_ip_addr[0] == '\0') {
+        return;
+    }
+
+    panel_display_fill_rect(0, s_layout.y_ip_address, panel_display_width(), 15, s_theme.background);
+
+    char display_str[72];
+    if (s_hostname[0] != '\0') {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s | %s", s_ip_addr, s_hostname);
+    } else {
+        snprintf(display_str, sizeof(display_str), "WIFI: %s", s_ip_addr);
+    }
+
+    panel_display_draw_string_small(s_layout.x_text_left, s_layout.y_ip_address, display_str,
+                                    s_theme.text_primary, s_theme.background);
+}
+
+static void draw_full_panel(uint16_t status, uint16_t address, uint8_t data)
+{
+    draw_static_elements();
+    draw_all_leds(status, address, data);
+    draw_ip_line();
+}
+
+static void present_full_panel(uint16_t status, uint16_t address, uint8_t data)
+{
+    if (!panel_display_is_banded()) {
+        draw_full_panel(status, address, data);
+        panel_display_present();
+        return;
+    }
+
+    int band_h = panel_display_band_height();
+    int band_limit = panel_display_bands_are_vertical() ? panel_display_width() : panel_display_height();
+    for (int y = 0; y < band_limit; y += band_h) {
+        int h = band_limit - y;
+        if (h > band_h) h = band_h;
+        panel_display_begin_band(y, h);
+        draw_full_panel(status, address, data);
+        panel_display_present();
+    }
 }
 
 /**
@@ -156,14 +402,27 @@ static void update_changed_leds(uint16_t new_status, uint16_t old_status,
                                  uint16_t new_address, uint16_t old_address,
                                  uint8_t new_data, uint8_t old_data)
 {
+    if (panel_display_is_monochrome()) {
+        if (new_status != old_status || new_address != old_address || new_data != old_data) {
+            redraw_monochrome_led_rows(new_status, new_address, new_data);
+        }
+        return;
+    }
+
     bool any_updated = false;
 
-    any_updated |= update_led_row_span(new_status, old_status, 10, X_STATUS_START, Y_STATUS, LED_SPACING_STATUS);
-    any_updated |= update_led_row_span(new_address, old_address, 16, X_ADDRESS_START, Y_ADDRESS, LED_SPACING_ADDRESS);
-    any_updated |= update_led_row_span(new_data, old_data, 8, X_DATA_START, Y_DATA, LED_SPACING_DATA);
+    any_updated |= update_led_row_span(new_status, old_status, 10,
+                                       s_layout.x_status_start, s_layout.y_status,
+                                       s_layout.led_spacing_status);
+    any_updated |= update_led_row_span(new_address, old_address, 16,
+                                       s_layout.x_address_start, s_layout.y_address,
+                                       s_layout.led_spacing_address);
+    any_updated |= update_led_row_span(new_data, old_data, 8,
+                                       s_layout.x_data_start, s_layout.y_data,
+                                       s_layout.led_spacing_data);
 
     if (any_updated) {
-        ili9341_wait_async();
+        panel_display_present();
     }
 }
 
@@ -175,27 +434,53 @@ bool altair_panel_init(void)
 {
     ESP_LOGI(TAG, "Initializing panel on Core %d", xPortGetCoreID());
     
-    // Initialize display
-    if (ili9341_init() != ESP_OK) {
+    configure_layout_and_theme();
+
+    if (!panel_display_init()) {
         ESP_LOGE(TAG, "Failed to initialize display!");
         return false;
     }
-    
-    // Draw static elements
-    draw_static_elements();
     
     // Initialize tracking state to 0
     last_status = 0;
     last_address = 0;
     last_data = 0;
-    
-    // Draw initial LED state (all off)
-    draw_all_leds(0, 0, 0);
+
+    present_full_panel(0, 0, 0);
     
     panel_initialized = true;
     ESP_LOGI(TAG, "Panel initialized successfully");
     
     return true;
+}
+
+void altair_panel_run_startup_test(uint32_t duration_ms)
+{
+    if (!panel_initialized || duration_ms == 0) {
+        return;
+    }
+
+    int64_t start_us = esp_timer_get_time();
+    uint32_t frames = 0;
+    TickType_t last_wake = xTaskGetTickCount();
+
+    panel_display_set_backlight(100);
+
+    while (true) {
+        uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - start_us) / 1000);
+        if (elapsed_ms >= duration_ms) {
+            break;
+        }
+
+        frames++;
+        draw_startup_test_frame(frames, elapsed_ms, frames);
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(PANEL_UPDATE_INTERVAL_MS));
+    }
+
+    ESP_LOGI(TAG, "Startup panel test complete: %lu frames in %lu ms", (unsigned long)frames,
+             (unsigned long)duration_ms);
+
+    present_full_panel(0, 0, 0);
 }
 
 void altair_panel_update(const intel8080_t *cpu)
@@ -211,8 +496,12 @@ void altair_panel_update(const intel8080_t *cpu)
     
     // Only update if something changed
     if (cur_status != last_status || cur_address != last_address || cur_data != last_data) {
-        update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
-        
+        if (panel_display_is_banded()) {
+            present_full_panel(cur_status, cur_address, cur_data);
+        } else {
+            update_changed_leds(cur_status, last_status, cur_address, last_address, cur_data, last_data);
+        }
+
         last_status = cur_status;
         last_address = cur_address;
         last_data = cur_data;
@@ -225,9 +514,6 @@ void altair_panel_update(const intel8080_t *cpu)
 
 #define PANEL_TASK_STACK_SIZE   4096
 #define PANEL_TASK_PRIORITY     4    // Legacy value (panel update task is created in main)
-// Y position for IP address (bottom of display)
-#define Y_IP_ADDRESS    225
-
 void altair_panel_show_ip(const char *ip_addr, const char *hostname)
 {
     if (!panel_initialized || ip_addr == NULL) {
@@ -235,21 +521,22 @@ void altair_panel_show_ip(const char *ip_addr, const char *hostname)
     }
 
     // Bring panel to normal brightness once WiFi is connected and IP is known
-    ili9341_set_backlight(80);
+    panel_display_set_backlight(80);
 
-    // Clear the entire bottom line
-    ili9341_fill_rect(0, Y_IP_ADDRESS, LCD_H_RES, 15, COLOR_BLACK);
-    
-    // Build display string: "WIFI: IP | hostname.local"
-    char display_str[72];
+    snprintf(s_ip_addr, sizeof(s_ip_addr), "%s", ip_addr);
     if (hostname) {
-        snprintf(display_str, sizeof(display_str), "WIFI: %s | %s.local", ip_addr, hostname);
+        snprintf(s_hostname, sizeof(s_hostname), "%s", hostname);
     } else {
-        snprintf(display_str, sizeof(display_str), "WIFI: %s", ip_addr);
+        s_hostname[0] = '\0';
     }
-    
-    // Draw the string using small font (same as address labels), offset 4 pixels right
-    ili9341_draw_string_small(4, Y_IP_ADDRESS, display_str, TEXT_GRAY, COLOR_BLACK);
+
+    if (panel_display_is_banded()) {
+        present_full_panel(last_status, last_address, last_data);
+        return;
+    }
+
+    draw_ip_line();
+    panel_display_present();
 }
 
 void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip)
@@ -257,30 +544,44 @@ void altair_panel_show_captive_portal(const char *ap_ssid, const char *portal_ip
     if (!panel_initialized) {
         return;
     }
-    
+
+    int passes = panel_display_is_banded()
+                     ? (panel_display_bands_are_vertical() ? panel_display_width() : panel_display_height())
+                     : 1;
+    int band_h = panel_display_is_banded() ? panel_display_band_height() : panel_display_height();
+
+    for (int band_y = 0; band_y < passes; band_y += band_h) {
+        if (panel_display_is_banded()) {
+            int h = panel_display_height() - band_y;
+            if (h > band_h) h = band_h;
+            panel_display_begin_band(band_y, h);
+        }
+
     // Clear entire screen
-    ili9341_fill_screen(COLOR_BLACK);
-    
+    panel_display_fill_screen(s_theme.background);
+
     // Draw border lines
-    ili9341_fill_rect(10, 50, 300, 2, COLOR_CYAN);
-    ili9341_fill_rect(10, 180, 300, 2, COLOR_CYAN);
-    
+    panel_display_fill_rect(10, 50, panel_display_width() - 20, 2, s_theme.text_primary);
+    panel_display_fill_rect(10, 180, panel_display_width() - 20, 2, s_theme.text_primary);
+
     // Title - using small font, centered (6 pixels per char)
     const char *title = "WIFI SETUP MODE";
-    int title_x = (LCD_H_RES - (strlen(title) * 6)) / 2;
-    ili9341_draw_string_small(title_x, 80, title, COLOR_CYAN, COLOR_BLACK);
-    
+    int title_x = (panel_display_width() - (strlen(title) * 6)) / 2;
+    panel_display_draw_string_small(title_x, 80, title, s_theme.text_primary, s_theme.background);
+
     // Instructions using small font
     char line1[48];
     char line2[48];
     snprintf(line1, sizeof(line1), "CONNECT TO: %s", ap_ssid ? ap_ssid : "Altair8800-Setup");
     snprintf(line2, sizeof(line2), "THEN OPEN: HTTP://%s/", portal_ip ? portal_ip : "192.168.4.1");
-    
-    int line1_x = (LCD_H_RES - (strlen(line1) * 6)) / 2;
-    int line2_x = (LCD_H_RES - (strlen(line2) * 6)) / 2;
-    
-    ili9341_draw_string_small(line1_x, 110, line1, COLOR_WHITE, COLOR_BLACK);
-    ili9341_draw_string_small(line2_x, 140, line2, COLOR_WHITE, COLOR_BLACK);
+
+    int line1_x = (panel_display_width() - (strlen(line1) * 6)) / 2;
+    int line2_x = (panel_display_width() - (strlen(line2) * 6)) / 2;
+
+    panel_display_draw_string_small(line1_x, 110, line1, s_theme.title_accent, s_theme.background);
+    panel_display_draw_string_small(line2_x, 140, line2, s_theme.title_accent, s_theme.background);
+    panel_display_present();
+    }
 }
 
 void altair_panel_set_backlight(int brightness)
@@ -289,5 +590,5 @@ void altair_panel_set_backlight(int brightness)
         return;
     }
 
-    ili9341_set_backlight(brightness);
+    panel_display_set_backlight(brightness);
 }

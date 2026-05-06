@@ -1,8 +1,8 @@
 /**
  * @file sdcard_esp32.c
- * @brief ESP32-S3 SDMMC driver implementation for Altair 8800 emulator
- * 
- * Uses ESP-IDF's SDMMC peripheral in 4-bit mode for high-speed SD card access.
+ * @brief ESP32-S3 SD card driver implementation for Altair 8800 emulator
+ *
+ * Uses ESP-IDF's SDMMC peripheral with board-specific pin mappings.
  */
 
 #include "sdcard_esp32.h"
@@ -23,38 +23,47 @@ bool sdcard_esp32_init(void)
 {
     esp_err_t ret;
 
-    ESP_LOGI(TAG, "Initializing SDMMC interface...");
+    if (s_mounted) {
+        ESP_LOGI(TAG, "SD card already mounted; skipping re-init");
+        return true;
+    }
+
+    ESP_LOGI(TAG, "Initializing SDMMC interface for %s...", ALTAIR_BOARD_NAME);
     ESP_LOGI(TAG, "  CLK: GPIO%d", SDMMC_PIN_CLK);
     ESP_LOGI(TAG, "  CMD: GPIO%d", SDMMC_PIN_CMD);
     ESP_LOGI(TAG, "  D0:  GPIO%d", SDMMC_PIN_D0);
-    ESP_LOGI(TAG, "  D1:  GPIO%d", SDMMC_PIN_D1);
-    ESP_LOGI(TAG, "  D2:  GPIO%d", SDMMC_PIN_D2);
-    ESP_LOGI(TAG, "  D3:  GPIO%d", SDMMC_PIN_D3);
+    if (SDMMC_BUS_WIDTH >= 4) {
+        ESP_LOGI(TAG, "  D1:  GPIO%d", SDMMC_PIN_D1);
+        ESP_LOGI(TAG, "  D2:  GPIO%d", SDMMC_PIN_D2);
+        ESP_LOGI(TAG, "  D3:  GPIO%d", SDMMC_PIN_D3);
+    }
+    ESP_LOGI(TAG, "  Bus width: %d-bit", SDMMC_BUS_WIDTH);
 
     // Options for mounting the filesystem
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024
+        .max_files = 4,
+        /* 0 == use the card's existing cluster size; avoids allocating a
+         * larger work area than necessary, which matters on boards without
+         * PSRAM where the LCD framebuffer competes for internal DRAM. */
+        .allocation_unit_size = 0,
     };
 
     // Configure SDMMC host
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  // 40 MHz
 
-    // Configure SDMMC slot with custom pins
+    // Configure SDMMC slot with board-specific custom pins
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    
+
     // Set the GPIO pins for SDMMC
     slot_config.clk = SDMMC_PIN_CLK;
     slot_config.cmd = SDMMC_PIN_CMD;
     slot_config.d0 = SDMMC_PIN_D0;
+
     slot_config.d1 = SDMMC_PIN_D1;
     slot_config.d2 = SDMMC_PIN_D2;
     slot_config.d3 = SDMMC_PIN_D3;
-    
-    // Use 4-bit bus width for faster transfers
-    slot_config.width = 4;
+    slot_config.width = SDMMC_BUS_WIDTH;
 
     // Enable internal pullups on the bus lines
     slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
@@ -71,8 +80,8 @@ bool sdcard_esp32_init(void)
             ESP_LOGE(TAG, "Failed to allocate memory for SD card.");
         } else {
             ESP_LOGE(TAG, "Failed to initialize SD card (%s). "
-                     "Make sure SD card is inserted and pins are correct.",
-                     esp_err_to_name(ret));
+                     "Make sure the card is inserted and the %s pin mapping is correct.",
+                     esp_err_to_name(ret), ALTAIR_BOARD_NAME);
         }
         return false;
     }

@@ -1,0 +1,33 @@
+menu "Altair 8800"
+
+choice ALTAIR_BOARD
+    prompt "Target board"
+    default ALTAIR_BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_3_5B
+    help
+        Select the physical ESP32-S3 board. This controls board-level pin
+        mappings for the display and SD card interfaces.
+
+    config ALTAIR_BOARD_FREENOVE
+        bool "Freenove ESP32-S3 with 2.8\" ILI9341 TFT"
+
+    config ALTAIR_BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_3_5B
+        bool "WAVESHARE-ESP32-S3-Touch-LCD-3.5B"
+endchoice
+
+choice ALTAIR_DISPLAY_DRIVER
+    prompt "Front panel display driver"
+    default ALTAIR_DISPLAY_ILI9341 if ALTAIR_BOARD_FREENOVE
+    default ALTAIR_DISPLAY_AXS15231B if ALTAIR_BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_3_5B
+    help
+        Select the physical front-panel display backend for the target board.
+
+    config ALTAIR_DISPLAY_ILI9341
+        bool "ILI9341 TFT (320x240)"
+        depends on ALTAIR_BOARD_FREENOVE
+
+    config ALTAIR_DISPLAY_AXS15231B
+        bool "AXS15231B QSPI LCD (WAVESHARE-ESP32-S3-Touch-LCD-3.5B)"
+        depends on ALTAIR_BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_3_5B
+endchoice
+
+endmenu

@@ -10,20 +10,19 @@
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
+#include "board_config.h"
 
-// Freenove ESP32-S3 LCD Pin Definitions (2.8" ILI9341 TFT)
-// Reference: Freenove FNK0104B ESP32-S3 Display - TFT_eSPI_Setups/FNK0104B_2.8_240x320_ILI9341.h
-#define LCD_PIN_MOSI    11      // SPI MOSI (Master Out Slave In) - FSPI_D
-#define LCD_PIN_SCLK    12      // SPI Clock - FSPI_CLK
-#define LCD_PIN_CS      10      // Chip Select - FSPI_CS
-#define LCD_PIN_DC      46      // Data/Command (NOT 13!)
-#define LCD_PIN_RST     -1      // Reset tied to ESP32 RST (no separate GPIO)
-#define LCD_PIN_BL      45      // Backlight (active HIGH)
+#define LCD_PIN_MOSI    ALTAIR_ILI9341_PIN_MOSI
+#define LCD_PIN_SCLK    ALTAIR_ILI9341_PIN_SCLK
+#define LCD_PIN_CS      ALTAIR_ILI9341_PIN_CS
+#define LCD_PIN_DC      ALTAIR_ILI9341_PIN_DC
+#define LCD_PIN_RST     ALTAIR_ILI9341_PIN_RST
+#define LCD_PIN_BL      ALTAIR_ILI9341_PIN_BL
 
 // LCD Parameters (Landscape mode: 320x240)
 #define LCD_H_RES       320
 #define LCD_V_RES       240
-#define LCD_SPI_HOST    SPI2_HOST
+#define LCD_SPI_HOST    ALTAIR_ILI9341_SPI_HOST
 #define LCD_PIXEL_CLK   (60 * 1000 * 1000)  // 60 MHz (reduced from 80 for stability)
 
 // Color definitions (RGB565)
@@ -122,7 +121,8 @@ void ili9341_draw_string_small(int x, int y, const char *str, uint16_t fg_color,
  * @param off_color Color for OFF state
  */
 void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
-                          int led_size, int spacing, uint16_t on_color, uint16_t off_color);
+                          int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                          uint16_t bg_color);
 
 /**
  * @brief Draw a contiguous span of LEDs using async DMA
@@ -140,6 +140,7 @@ void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
  */
 void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
                            int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                           uint16_t bg_color,
                            int left_index, int right_index);
 
 /**

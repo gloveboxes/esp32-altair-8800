@@ -1,9 +1,8 @@
 /**
  * @file sdcard_esp32.h
- * @brief ESP32-S3 SDMMC driver for Altair 8800 emulator
- * 
- * Provides SDMMC initialization and mounting for the ESP32-S3.
- * Pin assignments based on Freenove ESP32-S3 WROOM board.
+ * @brief ESP32-S3 SD card driver for Altair 8800 emulator
+ *
+ * Provides SD card initialization and FAT mounting for the ESP32-S3.
  */
 
 #ifndef _SDCARD_ESP32_H_
@@ -12,20 +11,21 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// SDMMC pin definitions for Freenove ESP32-S3 WROOM
-// These match the Arduino reference: Sketch_06.1_SDMMC_Test.ino
-#define SDMMC_PIN_CLK   38
-#define SDMMC_PIN_CMD   40
-#define SDMMC_PIN_D0    39
-#define SDMMC_PIN_D1    41
-#define SDMMC_PIN_D2    48
-#define SDMMC_PIN_D3    47
+#include "board_config.h"
+
+#define SDMMC_PIN_CLK   ALTAIR_SDMMC_PIN_CLK
+#define SDMMC_PIN_CMD   ALTAIR_SDMMC_PIN_CMD
+#define SDMMC_PIN_D0    ALTAIR_SDMMC_PIN_D0
+#define SDMMC_PIN_D1    ALTAIR_SDMMC_PIN_D1
+#define SDMMC_PIN_D2    ALTAIR_SDMMC_PIN_D2
+#define SDMMC_PIN_D3    ALTAIR_SDMMC_PIN_D3
+#define SDMMC_BUS_WIDTH ALTAIR_SDMMC_BUS_WIDTH
 
 // Mount point for the SD card filesystem
 #define SDCARD_MOUNT_POINT "/sdcard"
 
 /**
- * @brief Initialize SDMMC interface and mount FAT filesystem
+ * @brief Initialize the SD card interface and mount FAT filesystem
  * 
  * @return true on success, false on failure
  */

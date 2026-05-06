@@ -1,5 +1,7 @@
 # Build output
 build/
+build-freenove/
+build-waveshare/
 reference/
 
 # Generated config
@@ -11,3 +13,6 @@ managed_components/
 
 # macOS
 .DS_Store
+
+references/
+Apps/

@@ -3,6 +3,10 @@
 
 #include "i8080_disasm.h"
 #include "websocket_console.h"
+#include "sdkconfig.h"
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+#include "vt100_terminal.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -34,10 +38,14 @@ void publish_message(const char* message, size_t length)
     {
         return;
     }
-    
+
     for (size_t i = 0; i < length; i++)
     {
-        websocket_console_enqueue_output((uint8_t)message[i]);
+        uint8_t c = (uint8_t)message[i];
+        websocket_console_enqueue_output(c);
+#if CONFIG_ALTAIR_DISPLAY_AXS15231B
+        vt100_terminal_putchar(c);
+#endif
     }
 }
 

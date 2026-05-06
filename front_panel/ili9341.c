@@ -703,6 +703,7 @@ void ili9341_draw_string_small(int x, int y, const char *str, uint16_t fg_color,
 // LEDs are indexed with MSB on the left (highest bit index first)
 void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
                            int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                           uint16_t bg_color,
                            int left_index, int right_index)
 {
     if (num_leds <= 0 || led_size <= 0 || spacing <= 0) return;
@@ -721,7 +722,7 @@ void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
     // Byte swap colors for SPI
     uint16_t on_swap = (on_color >> 8) | (on_color << 8);
     uint16_t off_swap = (off_color >> 8) | (off_color << 8);
-    uint16_t bg_swap = 0;  // Black background between LEDs
+    uint16_t bg_swap = (bg_color >> 8) | (bg_color << 8);
 
     // Get the buffer we'll fill (not the one currently being transmitted)
     uint16_t *buf = dma_buffers[active_buffer];
@@ -768,10 +769,11 @@ void ili9341_draw_led_span(uint32_t bits, int num_leds, int x_start, int y,
 
 // Draw a full row of LEDs using async DMA
 void ili9341_draw_led_row(uint32_t bits, int num_leds, int x_start, int y,
-                          int led_size, int spacing, uint16_t on_color, uint16_t off_color)
+                          int led_size, int spacing, uint16_t on_color, uint16_t off_color,
+                          uint16_t bg_color)
 {
     ili9341_draw_led_span(bits, num_leds, x_start, y,
-                          led_size, spacing, on_color, off_color,
+                          led_size, spacing, on_color, off_color, bg_color,
                           num_leds - 1, 0);
 }
 

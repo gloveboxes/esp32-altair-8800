@@ -2,7 +2,7 @@
  * @file altair_panel.h
  * @brief Altair 8800 Front Panel Display for ESP32-S3
  * 
- * Displays CPU state (address bus, data bus, status LEDs) on ILI9341 LCD.
+ * Displays CPU state (address bus, data bus, status LEDs) on the selected panel backend.
  * Display update runs on Core 0, called from main loop.
  * Emulator runs on Core 1.
  */
@@ -31,17 +31,27 @@
 //-----------------------------------------------------------------------------
 
 // Recommended display update cadence (Core 0 main loop)
-#define PANEL_UPDATE_INTERVAL_MS 33  // ~30Hz
+#define PANEL_UPDATE_INTERVAL_MS 50  // ~20Hz
 
 /**
  * @brief Initialize the front panel display
  * 
- * Initializes the LCD hardware and draws static elements.
+ * Initializes the selected display backend and draws static elements.
  * Call once at startup before altair_panel_update().
  * 
  * @return true on success, false on failure
  */
 bool altair_panel_init(void);
+
+/**
+ * @brief Run a boot-time display stress test before normal emulator startup.
+ *
+ * Repeatedly redraws the full screen with a rapidly increasing counter so the
+ * user can visually verify that the panel is accepting full-frame updates.
+ *
+ * @param duration_ms Test duration in milliseconds
+ */
+void altair_panel_run_startup_test(uint32_t duration_ms);
 
 /**
  * @brief Update the front panel display

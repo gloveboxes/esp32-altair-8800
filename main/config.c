@@ -8,10 +8,19 @@
 #include "config.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
+#include "bt_keyboard.h"
+#include "port_drivers/chat_io.h"
+#include "wifi_setup.h"
+
+#include "driver/usb_serial_jtag.h"
 #include "esp_mac.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -20,15 +29,144 @@
 #define NVS_KEY_SSID    "wifi_ssid"
 #define NVS_KEY_PASS    "wifi_pass"
 #define NVS_KEY_RFS_IP  "rfs_ip"
+#define NVS_KEY_OPENAI  "openai_key"
+#define NVS_KEY_CHAT_PROVIDER "chat_provider"
+#define NVS_KEY_CHAT_ENDPOINT "chat_endpoint"
 
 // Static storage for retrieved values
 static char s_ssid[CONFIG_SSID_MAX_LEN + 1] = {0};
 static char s_password[CONFIG_PASSWORD_MAX_LEN + 1] = {0};
 static char s_rfs_ip[CONFIG_RFS_IP_MAX_LEN + 1] = {0};
+static char s_openai_key[CONFIG_OPENAI_KEY_MAX_LEN + 1] = {0};
+static char s_chat_provider[CONFIG_CHAT_PROVIDER_MAX_LEN + 1] = {0};
+static char s_chat_endpoint[CONFIG_CHAT_ENDPOINT_MAX_LEN + 1] = {0};
 static char s_mdns_hostname[32] = {0};
 
 static bool s_initialized = false;
 static bool s_config_loaded = false;
+
+static void config_serial_drain_line(uint32_t idle_timeout_ms)
+{
+    int64_t idle_start = esp_timer_get_time();
+    while ((esp_timer_get_time() - idle_start) < ((int64_t)idle_timeout_ms * 1000))
+    {
+        uint8_t c = 0;
+        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(10));
+        if (len <= 0)
+        {
+            continue;
+        }
+        if (c == '\r' || c == '\n')
+        {
+            return;
+        }
+        idle_start = esp_timer_get_time();
+    }
+}
+
+static int config_read_command_ms(uint32_t timeout_ms)
+{
+    int64_t start = esp_timer_get_time();
+    while ((esp_timer_get_time() - start) < ((int64_t)timeout_ms * 1000))
+    {
+        uint8_t c = 0;
+        int len = usb_serial_jtag_read_bytes(&c, 1, pdMS_TO_TICKS(100));
+        if (len <= 0)
+        {
+            continue;
+        }
+
+        if (c == '\r' || c == '\n')
+        {
+            return 0;
+        }
+        if (c == ' ' || c == '\t')
+        {
+            continue;
+        }
+        config_serial_drain_line(50);
+        if (c >= 'a' && c <= 'z')
+        {
+            c = (uint8_t)(c - 'a' + 'A');
+        }
+        return c;
+    }
+    return -1;
+}
+
+static void config_print_boot_menu(void)
+{
+    printf("\nBoot configuration manager\n");
+    printf("  1 - Bluetooth keyboard\n");
+    printf("  2 - OpenAI / compatible chat endpoint\n");
+    printf("  3 - WiFi credentials\n");
+    printf("  Q - continue boot\n");
+}
+
+void config_run_boot_shell(void)
+{
+    if (!usb_serial_jtag_is_connected())
+    {
+        return;
+    }
+
+    printf("\nBoot configuration\n");
+    bt_keyboard_print_status();
+    printf("Press 'C' within 5 seconds to manage boot configuration.\n");
+    printf("Press Enter to continue boot now.\n");
+
+    int c = config_read_command_ms(5000);
+    if (c == -1 || c == 0 || c != 'C')
+    {
+        return;
+    }
+
+    config_print_boot_menu();
+
+    for (;;)
+    {
+        printf("config> ");
+        int cmd = config_read_command_ms(60000);
+        printf("\n");
+        if (cmd == -1)
+        {
+            printf("Boot configuration manager timed out.\n\n");
+            return;
+        }
+
+        switch (cmd)
+        {
+        case 0:
+            break;
+
+        case '1':
+            bt_keyboard_run_config_shell();
+            config_print_boot_menu();
+            break;
+
+        case '2':
+            chat_io_run_config_shell();
+            config_print_boot_menu();
+            break;
+
+        case '3':
+            wifi_setup_run_config_shell();
+            config_print_boot_menu();
+            break;
+
+        case 'Q':
+            printf("Leaving boot configuration manager.\n\n");
+            return;
+
+        default:
+            if (cmd > ' ')
+            {
+                printf("Unknown command '%c'. Use 1, 2, 3, or Q.\n", (char)cmd);
+            }
+            break;
+        }
+    }
+}
 
 /**
  * @brief Load configuration from NVS into static buffers
@@ -71,6 +209,25 @@ static bool config_load(void)
         s_rfs_ip[0] = '\0';  // Not configured, which is fine
     }
 
+    // Load OpenAI key (optional)
+    len = sizeof(s_openai_key);
+    err = nvs_get_str(handle, NVS_KEY_OPENAI, s_openai_key, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_openai_key[0] = '\0';
+    }
+
+    len = sizeof(s_chat_provider);
+    err = nvs_get_str(handle, NVS_KEY_CHAT_PROVIDER, s_chat_provider, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_chat_provider[0] = '\0';
+    }
+
+    len = sizeof(s_chat_endpoint);
+    err = nvs_get_str(handle, NVS_KEY_CHAT_ENDPOINT, s_chat_endpoint, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_chat_endpoint[0] = '\0';
+    }
+
     nvs_close(handle);
     s_config_loaded = true;
 
@@ -80,7 +237,7 @@ static bool config_load(void)
     return true;
 }
 
-bool config_init(void)
+bool altair_config_init(void)
 {
     if (s_initialized) {
         return true;
@@ -115,10 +272,10 @@ bool config_init(void)
     return true;
 }
 
-bool config_exists(void)
+bool altair_config_exists(void)
 {
     if (!s_initialized) {
-        config_init();
+        altair_config_init();
     }
 
     // Check if SSID exists in NVS
@@ -135,10 +292,10 @@ bool config_exists(void)
     return (err == ESP_OK && len > 1);  // len includes null terminator
 }
 
-bool config_save(const char* ssid, const char* password, const char* rfs_ip)
+bool altair_config_save(const char* ssid, const char* password, const char* rfs_ip)
 {
     if (!s_initialized) {
-        config_init();
+        altair_config_init();
     }
 
     if (!ssid || ssid[0] == '\0') {
@@ -211,6 +368,46 @@ bool config_save(const char* ssid, const char* password, const char* rfs_ip)
     return true;
 }
 
+bool config_clear_wifi_settings(void)
+{
+    if (!s_initialized) {
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        printf("[Config] Failed to open NVS for WiFi clear: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    esp_err_t first_err = ESP_OK;
+    const char *keys[] = { NVS_KEY_SSID, NVS_KEY_PASS, NVS_KEY_RFS_IP };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        err = nvs_erase_key(handle, keys[i]);
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND && first_err == ESP_OK) {
+            first_err = err;
+        }
+    }
+
+    if (first_err == ESP_OK) {
+        first_err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (first_err != ESP_OK) {
+        printf("[Config] Failed to clear WiFi settings: %s\n", esp_err_to_name(first_err));
+        return false;
+    }
+
+    s_ssid[0] = '\0';
+    s_password[0] = '\0';
+    s_rfs_ip[0] = '\0';
+    s_config_loaded = false;
+    printf("[Config] WiFi settings cleared\n");
+    return true;
+}
+
 const char* config_get_ssid(void)
 {
     if (!s_config_loaded) {
@@ -235,10 +432,189 @@ const char* config_get_rfs_ip(void)
     return s_rfs_ip[0] ? s_rfs_ip : NULL;
 }
 
-bool config_clear(void)
+bool config_load_openai_key(char* key, size_t key_len)
+{
+    if (!key || key_len == 0) {
+        return false;
+    }
+
+    key[0] = '\0';
+
+    if (!s_initialized) {
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t len = key_len;
+    err = nvs_get_str(handle, NVS_KEY_OPENAI, key, &len);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        key[0] = '\0';
+        return false;
+    }
+
+    key[key_len - 1] = '\0';
+    strncpy(s_openai_key, key, CONFIG_OPENAI_KEY_MAX_LEN);
+    s_openai_key[CONFIG_OPENAI_KEY_MAX_LEN] = '\0';
+    return key[0] != '\0';
+}
+
+bool config_save_openai_key(const char* key)
 {
     if (!s_initialized) {
-        config_init();
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        printf("[Config] Failed to open NVS for OpenAI key: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    if (key && key[0] != '\0') {
+        err = nvs_set_str(handle, NVS_KEY_OPENAI, key);
+    } else {
+        err = nvs_erase_key(handle, NVS_KEY_OPENAI);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
+    }
+
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        printf("[Config] Failed to save OpenAI key: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    if (key && key[0] != '\0') {
+        strncpy(s_openai_key, key, CONFIG_OPENAI_KEY_MAX_LEN);
+        s_openai_key[CONFIG_OPENAI_KEY_MAX_LEN] = '\0';
+        printf("[Config] OpenAI API key saved\n");
+    } else {
+        s_openai_key[0] = '\0';
+        printf("[Config] OpenAI API key cleared\n");
+    }
+
+    return true;
+}
+
+static bool config_nvs_get_string(const char *nvs_key, char *value, size_t value_len)
+{
+    if (!value || value_len == 0) {
+        return false;
+    }
+
+    value[0] = '\0';
+
+    if (!s_initialized) {
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t len = value_len;
+    err = nvs_get_str(handle, nvs_key, value, &len);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        value[0] = '\0';
+        return false;
+    }
+
+    value[value_len - 1] = '\0';
+    return value[0] != '\0';
+}
+
+bool config_load_chat_settings(char* provider, size_t provider_len,
+                               char* endpoint, size_t endpoint_len,
+                               char* key, size_t key_len)
+{
+    bool loaded = false;
+
+    if (provider && provider_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_CHAT_PROVIDER, provider, provider_len);
+    }
+    if (endpoint && endpoint_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_CHAT_ENDPOINT, endpoint, endpoint_len);
+    }
+    if (key && key_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_OPENAI, key, key_len);
+    }
+
+    return loaded;
+}
+
+static esp_err_t config_nvs_set_or_erase(nvs_handle_t handle, const char *nvs_key, const char *value)
+{
+    if (value && value[0] != '\0') {
+        return nvs_set_str(handle, nvs_key, value);
+    }
+
+    esp_err_t err = nvs_erase_key(handle, nvs_key);
+    return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
+}
+
+bool config_save_chat_settings(const char* provider, const char* endpoint,
+                               const char* key)
+{
+    if (!s_initialized) {
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        printf("[Config] Failed to open NVS for chat settings: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    err = config_nvs_set_or_erase(handle, NVS_KEY_CHAT_PROVIDER, provider);
+    if (err == ESP_OK) {
+        err = config_nvs_set_or_erase(handle, NVS_KEY_CHAT_ENDPOINT, endpoint);
+    }
+    if (err == ESP_OK) {
+        err = config_nvs_set_or_erase(handle, NVS_KEY_OPENAI, key);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        printf("[Config] Failed to save chat settings: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    strncpy(s_chat_provider, provider ? provider : "", CONFIG_CHAT_PROVIDER_MAX_LEN);
+    s_chat_provider[CONFIG_CHAT_PROVIDER_MAX_LEN] = '\0';
+    strncpy(s_chat_endpoint, endpoint ? endpoint : "", CONFIG_CHAT_ENDPOINT_MAX_LEN);
+    s_chat_endpoint[CONFIG_CHAT_ENDPOINT_MAX_LEN] = '\0';
+    strncpy(s_openai_key, key ? key : "", CONFIG_OPENAI_KEY_MAX_LEN);
+    s_openai_key[CONFIG_OPENAI_KEY_MAX_LEN] = '\0';
+
+    printf("[Config] Chat settings saved\n");
+    return true;
+}
+
+bool altair_config_clear(void)
+{
+    if (!s_initialized) {
+        altair_config_init();
     }
 
     nvs_handle_t handle;
@@ -268,6 +644,9 @@ bool config_clear(void)
     s_ssid[0] = '\0';
     s_password[0] = '\0';
     s_rfs_ip[0] = '\0';
+    s_openai_key[0] = '\0';
+    s_chat_provider[0] = '\0';
+    s_chat_endpoint[0] = '\0';
     s_config_loaded = false;
 
     printf("[Config] Configuration cleared\n");
@@ -292,7 +671,7 @@ bool config_get_device_id(char* buffer, size_t buffer_len)
 const char* get_mdns_hostname(void)
 {
     if (!s_initialized) {
-        config_init();
+        altair_config_init();
     }
     return s_mdns_hostname;
 }

@@ -20,23 +20,25 @@
   },
   "C_Cpp.default.defines": [
     "ESP_PLATFORM",
-    "IDF_VER=\"6.1\""
+    "IDF_VER=\"6.0\""
   ],
   "C_Cpp.default.cStandard": "c17",
   "files.associations": {
     "sdkconfig": "ini",
     "*.h": "c"
   },
-  "idf.espIdfPath": "${env:HOME}/.espressif/v6.0/esp-idf",
-  "idf.toolsPath": "${env:HOME}/.espressif",
-  "idf.pythonInstallPath": "${env:HOME}/.espressif/python_env/idf6.0_py3.14_env/bin/python",
-  "idf.port": "/dev/tty.usbmodem101",
+  "idf.espIdfPath": "/Users/dave/.espressif/v6.0/esp-idf",
+  "idf.toolsPath": "/Users/dave/.espressif",
+  "idf.pythonInstallPath": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin/python",
+  "idf.buildPath": "/Users/dave/GitHub/esp32/esp32-altair-8800/build",
+  "idf.port": "/dev/tty.usbmodem2101",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
   "idf.customExtraVars": {
+    "IDF_PATH": "/Users/dave/.espressif/v6.0/esp-idf",
     "IDF_TARGET": "esp32s3"
   },
   "idf.flashType": "UART",
-  "idf.currentSetup": "${env:HOME}/.espressif/v6.0/esp-idf"
+  "idf.currentSetup": "/Users/dave/.espressif/v6.0/esp-idf"
 }
