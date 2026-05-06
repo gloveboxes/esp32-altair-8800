@@ -9,7 +9,7 @@
     "${workspaceFolder}/drivers",
     "${workspaceFolder}/terminal",
     "${workspaceFolder}/build/config",
-    "${env:HOME}/.espressif/v6.0/esp-idf/components/**"
+    "${env:HOME}/.espressif/v6.0.1/esp-idf/components/**"
   ],
   "C_Cpp.files.exclude": {
     "**/build": true,
@@ -20,14 +20,14 @@
   },
   "C_Cpp.default.defines": [
     "ESP_PLATFORM",
-    "IDF_VER=\"6.0\""
+    "IDF_VER=\"6.0.1\""
   ],
   "C_Cpp.default.cStandard": "c17",
   "files.associations": {
     "sdkconfig": "ini",
     "*.h": "c"
   },
-  "idf.espIdfPath": "/Users/dave/.espressif/v6.0/esp-idf",
+  "idf.espIdfPath": "/Users/dave/.espressif/v6.0.1/esp-idf",
   "idf.toolsPath": "/Users/dave/.espressif",
   "idf.pythonInstallPath": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin/python",
   "idf.buildPath": "/Users/dave/GitHub/esp32/esp32-altair-8800/build",
@@ -36,9 +36,14 @@
     "board/esp32s3-builtin.cfg"
   ],
   "idf.customExtraVars": {
-    "IDF_PATH": "/Users/dave/.espressif/v6.0/esp-idf",
     "IDF_TARGET": "esp32s3"
   },
   "idf.flashType": "UART",
-  "idf.currentSetup": "/Users/dave/.espressif/v6.0/esp-idf"
+  "idf.currentSetup": "/Users/dave/.espressif/v6.0.1/esp-idf",
+  "clangd.path": "/Users/dave/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=/Users/dave/GitHub/esp32/esp32-altair-8800/build"
+  ]
 }

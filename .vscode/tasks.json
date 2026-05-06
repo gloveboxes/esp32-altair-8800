@@ -4,7 +4,7 @@
     {
       "label": "Altair: Switch config to Waveshare 3.5B AXS15231B",
       "type": "shell",
-      "command": "source \"$HOME/.espressif/v6.0/esp-idf/export.sh\" >/dev/null && rm -f sdkconfig && idf.py -D SDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.WAVESHARE-ESP32-S3-Touch-LCD-3.5B.defaults\" reconfigure",
+      "command": "source \"$HOME/.espressif/v6.0.1/esp-idf/export.sh\" >/dev/null && rm -f sdkconfig && idf.py -D SDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.WAVESHARE-ESP32-S3-Touch-LCD-3.5B.defaults\" reconfigure",
       "options": {
         "cwd": "${workspaceFolder}"
       },
@@ -19,7 +19,7 @@
     {
       "label": "Altair: Switch config to Freenove ILI9341",
       "type": "shell",
-      "command": "source \"$HOME/.espressif/v6.0/esp-idf/export.sh\" >/dev/null && rm -f sdkconfig && idf.py -D SDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.freenove.defaults\" reconfigure",
+      "command": "source \"$HOME/.espressif/v6.0.1/esp-idf/export.sh\" >/dev/null && rm -f sdkconfig && idf.py -D SDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.freenove.defaults\" reconfigure",
       "options": {
         "cwd": "${workspaceFolder}"
       },

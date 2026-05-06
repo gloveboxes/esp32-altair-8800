@@ -76,7 +76,7 @@ The network stack always preempts panel rendering, so a wifi/console packet can 
 ## Build / flash
 
 ```bash
-source $HOME/.espressif/v6.0/esp-idf/export.sh
+source $HOME/.espressif/v6.0.1/esp-idf/export.sh
 ninja -C build -j6 all
 idf.py -p /dev/cu.usbmodem* flash
 ```

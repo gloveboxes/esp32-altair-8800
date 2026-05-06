@@ -107,7 +107,7 @@ docs/                 Development notes
 
 ## Build Prerequisites
 
-- ESP-IDF v6.0 for `esp32s3`.
+- ESP-IDF v6.0.1 for `esp32s3`.
 - ESP-IDF VS Code extension, recommended for build/flash/monitor.
 - ESP32-S3 board matching one of the supported configs.
 - SD card formatted for the project disk layout when using CP/M disk images.
@@ -115,13 +115,13 @@ docs/                 Development notes
 Install ESP-IDF tools for ESP32-S3 if needed:
 
 ```bash
-$HOME/.espressif/v6.0/esp-idf/install.sh esp32s3
+$HOME/.espressif/v6.0.1/esp-idf/install.sh esp32s3
 ```
 
 For CLI use, source ESP-IDF before running `idf.py`:
 
 ```bash
-source $HOME/.espressif/v6.0/esp-idf/export.sh
+source $HOME/.espressif/v6.0.1/esp-idf/export.sh
 ```
 
 ## Swapping Target Board Configs
