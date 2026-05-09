@@ -90,6 +90,11 @@ b:cc env
 b:clink env dxenv long
 a:pip a:env.com=env.com
 era env.*
+b:ft -g clock/clock.c
+b:cc clock
+b:clink clock dxenv long
+a:pip a:clock.com=clock.com
+era clock.*
 era dxenv.*
 b:ft -g pico/pico.c
 b:cc pico

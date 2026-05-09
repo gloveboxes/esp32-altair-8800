@@ -1,0 +1,11 @@
+ft -g file://clock/clock.c
+ft -g file://sdk/dxenv.c
+ft -g file://sdk/long.c
+cc dxenv
+cc long
+cc clock
+
+clink clock dxenv long
+era dxenv.*
+era long.*
+mcpdone clock
