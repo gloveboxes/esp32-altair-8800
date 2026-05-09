@@ -31,7 +31,7 @@
   "idf.toolsPath": "/Users/dave/.espressif",
   "idf.pythonInstallPath": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin/python",
   "idf.buildPath": "/Users/dave/GitHub/esp32/esp32-altair-8800/build",
-  "idf.port": "/dev/tty.usbmodem2101",
+  "idf.port": "/dev/tty.usbmodem101",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],

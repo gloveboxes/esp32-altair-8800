@@ -227,17 +227,6 @@ void rfs_cache_clear(void)
     printf("[RFS_CACHE] Cache cleared\n");
 }
 
-// Print cache statistics
-void rfs_cache_print_stats(void)
-{
-    uint32_t total = rfs_cache_hits + rfs_cache_misses;
-    if (total > 0)
-    {
-        printf("[RFS_CACHE] Hits: %u, Misses: %u, Hit rate: %u%%\n", (unsigned)rfs_cache_hits,
-               (unsigned)rfs_cache_misses, (unsigned)((rfs_cache_hits * 100) / total));
-    }
-}
-
 // Forward declarations
 static err_t rfs_tcp_connected_cb(void* arg, struct tcp_pcb* tpcb, err_t err);
 static err_t rfs_tcp_recv_cb(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err_t err);

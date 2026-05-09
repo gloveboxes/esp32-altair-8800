@@ -26,8 +26,6 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#define CHAT_HOST "api.openai.com"
-#define CHAT_PORT 443
 #define CHAT_PATH "/v1/chat/completions"
 #define CHAT_DEFAULT_OPENAI_ENDPOINT "https://api.openai.com/v1/chat/completions"
 #define CHAT_PROVIDER_OPENAI "openai"
@@ -160,6 +158,7 @@ static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch);
 static void chat_process_body_byte(chat_parse_t *parser, uint8_t ch);
 static void chat_process_sse_byte(chat_parse_t *parser, uint8_t ch);
 static void chat_extract_content(chat_parse_t *parser, const char *json);
+static int chat_hex_nibble(char ch);
 
 static uint32_t chat_ms(void)
 {
@@ -486,12 +485,6 @@ void chat_io_set_network_available(bool available)
     s_network_available = available;
 }
 
-void chat_io_prompt_api_key(void)
-{
-    chat_load_settings();
-    chat_configure_openai();
-}
-
 void chat_io_run_config_shell(void)
 {
     chat_load_settings();
@@ -611,7 +604,7 @@ static void chat_trigger_request(void)
 
     if (port_state.request_overflow || port_state.request_len == 0)
     {
-        chat_queue_text(port_state.generation, "OpenAI request buffer error\n");
+        chat_queue_text(port_state.generation, "Chat request buffer error\n");
         chat_queue_eof(NULL, port_state.generation);
         return;
     }
@@ -624,7 +617,7 @@ static void chat_trigger_request(void)
 
     if (!request)
     {
-        chat_queue_text(port_state.generation, "OpenAI out of memory\n");
+        chat_queue_text(port_state.generation, "Chat out of memory\n");
         chat_queue_eof(NULL, port_state.generation);
         return;
     }
@@ -637,7 +630,7 @@ static void chat_trigger_request(void)
     if (!s_chat_request_queue || xQueueSend(s_chat_request_queue, &request, 0) != pdTRUE)
     {
         free(request);
-        chat_queue_text(port_state.generation, "OpenAI request queue busy\n");
+        chat_queue_text(port_state.generation, "Chat request queue busy\n");
         chat_queue_eof(NULL, port_state.generation);
     }
 }
@@ -727,10 +720,6 @@ uint8_t chat_input(uint8_t port)
     }
 
     return 0;
-}
-
-void chat_client_poll(void)
-{
 }
 
 static void chat_client_task(void *arg)
@@ -862,14 +851,14 @@ static void chat_process_request(chat_request_t *request)
 {
     if (!chat_provider_is_compatible() && s_chat_api_key[0] == '\0')
     {
-        chat_queue_text(request->generation, "OpenAI API key not configured\n");
+        chat_queue_text(request->generation, "Chat API key not configured\n");
         chat_queue_eof(NULL, request->generation);
         return;
     }
 
     if (!s_network_available || !wifi_is_connected())
     {
-        chat_queue_text(request->generation, "OpenAI network unavailable\n");
+        chat_queue_text(request->generation, "Chat network unavailable\n");
         chat_queue_eof(NULL, request->generation);
         return;
     }
@@ -878,6 +867,7 @@ static void chat_process_request(chat_request_t *request)
     chat_endpoint_t parsed_endpoint;
     if (!chat_parse_endpoint(endpoint, &parsed_endpoint))
     {
+        ESP_LOGE(TAG, "Failed to parse chat endpoint: %s", (endpoint && endpoint[0]) ? endpoint : "(empty)");
         chat_queue_text(request->generation, "Chat endpoint invalid\n");
         chat_queue_eof(NULL, request->generation);
         return;
@@ -889,7 +879,7 @@ static void chat_process_request(chat_request_t *request)
     esp_tls_t *tls = esp_tls_init();
     if (!tls)
     {
-        chat_queue_text(request->generation, "OpenAI TLS init failed\n");
+        chat_queue_text(request->generation, "Chat TLS init failed\n");
         chat_queue_eof(NULL, request->generation);
         return;
     }
@@ -916,7 +906,7 @@ static void chat_process_request(chat_request_t *request)
     if (ret != 1)
     {
         chat_log_tls_error(tls, ret);
-        chat_queue_text(request->generation, "OpenAI connect failed\n");
+        chat_queue_text(request->generation, "Chat connect failed\n");
         chat_queue_eof(NULL, request->generation);
         esp_tls_conn_destroy(tls);
         return;
@@ -939,7 +929,7 @@ static void chat_process_request(chat_request_t *request)
                               parsed_endpoint.path, parsed_endpoint.host_header, auth_header, (unsigned int)body_len);
     if (header_len <= 0 || (size_t)header_len >= sizeof(header))
     {
-        chat_queue_text(request->generation, "OpenAI request header error\n");
+        chat_queue_text(request->generation, "Chat request header error\n");
         chat_queue_eof(NULL, request->generation);
         esp_tls_conn_destroy(tls);
         return;
@@ -948,7 +938,7 @@ static void chat_process_request(chat_request_t *request)
     if (!chat_send_all(tls, (const uint8_t *)header, (size_t)header_len) ||
         !chat_send_all(tls, (const uint8_t *)body, body_len))
     {
-        chat_queue_text(request->generation, "OpenAI send failed\n");
+        chat_queue_text(request->generation, "Chat send failed\n");
         chat_queue_eof(NULL, request->generation);
         esp_tls_conn_destroy(tls);
         return;
@@ -961,7 +951,7 @@ static void chat_process_request(chat_request_t *request)
 
     if (!chat_read_response(tls, &parser) && !parser.done)
     {
-        chat_queue_text(request->generation, "OpenAI stream error\n");
+        chat_queue_text(request->generation, "Chat stream error\n");
     }
     chat_queue_eof(&parser, request->generation);
 
@@ -1047,21 +1037,13 @@ static bool chat_read_response(esp_tls_t *tls, chat_parse_t *parser)
 
         if (chat_ms() - last_rx_ms > CHAT_STREAM_TIMEOUT_MS)
         {
-            chat_queue_text(parser->generation, "OpenAI stream timeout\n");
+            chat_queue_text(parser->generation, "Chat stream timeout\n");
             return false;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     return true;
-}
-
-static int chat_hex_value(uint8_t ch)
-{
-    if (ch >= '0' && ch <= '9') return ch - '0';
-    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
-    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
-    return -1;
 }
 
 static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch)
@@ -1082,7 +1064,7 @@ static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch)
                 if (parser->status_code != 200)
                 {
                     char msg[48];
-                    snprintf(msg, sizeof(msg), "OpenAI HTTP %d\n", parser->status_code);
+                    snprintf(msg, sizeof(msg), "Chat HTTP %d\n", parser->status_code);
                     chat_queue_text(parser->generation, msg);
                     parser->done = true;
                     return;
@@ -1111,7 +1093,7 @@ static void chat_process_body_byte(chat_parse_t *parser, uint8_t ch)
     {
         case CHUNK_SIZE:
         {
-            int value = chat_hex_value(ch);
+            int value = chat_hex_nibble((char)ch);
             if (value >= 0 && !parser->chunk_extension)
             {
                 parser->chunk_size = (parser->chunk_size << 4) | (size_t)value;
@@ -1204,37 +1186,148 @@ static int chat_hex_nibble(char ch)
     return -1;
 }
 
+/* Map a Unicode codepoint to a printable 7-bit ASCII replacement so the
+ * Altair VT100 (which only handles 7-bit ASCII) does not see UTF-8
+ * continuation bytes leak through as stray characters (e.g. the curly
+ * apostrophe U+2019 0xE2 0x80 0x99 surfacing as 'b'). Returns 0 if no
+ * sensible replacement exists, in which case the caller should drop the
+ * codepoint.
+ */
+static char chat_cp_to_ascii(uint32_t cp)
+{
+    if (cp < 0x80) return (char)cp;
+    switch (cp)
+    {
+        case 0x00A0: return ' ';            /* NBSP */
+        case 0x00A9: return 'C';            /* (C) */
+        case 0x00AE: return 'R';            /* (R) */
+        case 0x00B0: return ' ';            /* degree */
+        case 0x00B7: return '.';            /* middle dot */
+        case 0x2010: case 0x2011:
+        case 0x2012: case 0x2013:
+        case 0x2014: case 0x2015: return '-';   /* hyphen / en / em dash */
+        case 0x2018: case 0x2019:
+        case 0x201A: case 0x2032: return '\''; /* single quotes / prime */
+        case 0x201C: case 0x201D:
+        case 0x201E: case 0x2033: return '"';  /* double quotes */
+        case 0x2022: case 0x2023:
+        case 0x25E6: case 0x2043: return '*';  /* bullets */
+        case 0x2026: return '.';                /* ellipsis -> '.' */
+        case 0x2192: return '>';                /* right arrow */
+        case 0x2190: return '<';                /* left arrow */
+        case 0x00D7: return 'x';                /* multiply */
+        default: return 0;
+    }
+}
+
+static void chat_emit_codepoint(chat_parse_t *parser, uint32_t cp)
+{
+    if (cp < 0x80)
+    {
+        chat_queue_char(parser, parser->generation, (uint8_t)cp, false);
+        return;
+    }
+    char repl = chat_cp_to_ascii(cp);
+    if (repl == '.' && cp == 0x2026)
+    {
+        /* ellipsis: emit "..." */
+        chat_queue_char(parser, parser->generation, '.', false);
+        chat_queue_char(parser, parser->generation, '.', false);
+        chat_queue_char(parser, parser->generation, '.', false);
+        return;
+    }
+    if (repl)
+    {
+        chat_queue_char(parser, parser->generation, (uint8_t)repl, false);
+    }
+    /* else: silently drop unknown codepoint */
+}
+
 static void chat_emit_json_string(chat_parse_t *parser, const char *ptr)
 {
     while (*ptr && *ptr != '"')
     {
-        uint8_t out = (uint8_t)*ptr++;
-        if (out == '\\' && *ptr)
+        uint8_t b = (uint8_t)*ptr++;
+        if (b == '\\' && *ptr)
         {
             char esc = *ptr++;
             switch (esc)
             {
-                case 'n': out = '\n'; break;
-                case 'r': out = '\r'; break;
-                case 't': out = '\t'; break;
-                case '"': out = '"'; break;
-                case '\\': out = '\\'; break;
+                case 'n': chat_queue_char(parser, parser->generation, '\n', false); break;
+                case 'r': chat_queue_char(parser, parser->generation, '\r', false); break;
+                case 't': chat_queue_char(parser, parser->generation, '\t', false); break;
+                case '"': chat_queue_char(parser, parser->generation, '"', false); break;
+                case '\\': chat_queue_char(parser, parser->generation, '\\', false); break;
+                case '/': chat_queue_char(parser, parser->generation, '/', false); break;
+                case 'b': chat_queue_char(parser, parser->generation, '\b', false); break;
+                case 'f': chat_queue_char(parser, parser->generation, '\f', false); break;
                 case 'u':
-                    if (chat_hex_nibble(ptr[0]) >= 0 && chat_hex_nibble(ptr[1]) >= 0 &&
-                        chat_hex_nibble(ptr[2]) >= 0 && chat_hex_nibble(ptr[3]) >= 0)
+                {
+                    int n0 = chat_hex_nibble(ptr[0]);
+                    int n1 = (n0 >= 0) ? chat_hex_nibble(ptr[1]) : -1;
+                    int n2 = (n1 >= 0) ? chat_hex_nibble(ptr[2]) : -1;
+                    int n3 = (n2 >= 0) ? chat_hex_nibble(ptr[3]) : -1;
+                    if (n3 >= 0)
                     {
+                        uint32_t cp = (uint32_t)((n0 << 12) | (n1 << 8) | (n2 << 4) | n3);
                         ptr += 4;
+                        /* surrogate pair */
+                        if (cp >= 0xD800 && cp <= 0xDBFF && ptr[0] == '\\' && ptr[1] == 'u')
+                        {
+                            int m0 = chat_hex_nibble(ptr[2]);
+                            int m1 = (m0 >= 0) ? chat_hex_nibble(ptr[3]) : -1;
+                            int m2 = (m1 >= 0) ? chat_hex_nibble(ptr[4]) : -1;
+                            int m3 = (m2 >= 0) ? chat_hex_nibble(ptr[5]) : -1;
+                            if (m3 >= 0)
+                            {
+                                uint32_t lo = (uint32_t)((m0 << 12) | (m1 << 8) | (m2 << 4) | m3);
+                                if (lo >= 0xDC00 && lo <= 0xDFFF)
+                                {
+                                    cp = 0x10000u + (((cp - 0xD800u) << 10) | (lo - 0xDC00u));
+                                    ptr += 6;
+                                }
+                            }
+                        }
+                        chat_emit_codepoint(parser, cp);
                     }
-                    out = '?';
                     break;
+                }
                 default:
-                    out = (uint8_t)esc;
+                    chat_queue_char(parser, parser->generation, (uint8_t)esc & 0x7f, false);
                     break;
             }
+            continue;
         }
-        chat_queue_char(parser, parser->generation, out & 0x7f, false);
+
+        if (b < 0x80)
+        {
+            chat_queue_char(parser, parser->generation, b, false);
+            continue;
+        }
+
+        /* UTF-8 lead byte: decode the codepoint, then map to ASCII. */
+        uint32_t cp = 0;
+        int extra = 0;
+        if ((b & 0xE0) == 0xC0) { cp = b & 0x1F; extra = 1; }
+        else if ((b & 0xF0) == 0xE0) { cp = b & 0x0F; extra = 2; }
+        else if ((b & 0xF8) == 0xF0) { cp = b & 0x07; extra = 3; }
+        else { continue; /* stray continuation byte */ }
+
+        bool ok = true;
+        for (int i = 0; i < extra; ++i)
+        {
+            uint8_t cb = (uint8_t)*ptr;
+            if (!cb || (cb & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (cb & 0x3F);
+            ptr++;
+        }
+        if (ok)
+        {
+            chat_emit_codepoint(parser, cp);
+        }
     }
 }
+
 
 static void chat_extract_content(chat_parse_t *parser, const char *json)
 {
@@ -1306,7 +1399,7 @@ static void chat_queue_eof(chat_parse_t *parser, uint32_t generation)
     if (parser && parser->response_truncated)
     {
         parser->response_truncated = false;
-        chat_queue_text_force(generation, "\nOpenAI response truncated\n");
+        chat_queue_text_force(generation, "\nChat response truncated\n");
     }
 
     chat_response_t response = {

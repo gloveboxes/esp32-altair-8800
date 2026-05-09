@@ -42,20 +42,17 @@ static const char* TAG = "WiFi";
 // Delay before any connect attempt (ms)
 #define WIFI_CONNECT_DELAY_MS  800
 
-// Keep WiFi modest so it can coexist with BLE HID and the display on the
-// ESP32-S3's limited internal RAM. PSRAM holds the large app buffers, but the
-// WiFi static buffers must still come from internal RAM.
-#define WIFI_STATIC_RX_BUFFERS  8
-#define WIFI_STATIC_TX_BUFFERS  8
-#define WIFI_CACHE_TX_BUFFERS   8
-#define WIFI_MGMT_SHORT_BUFFERS 16
+// WiFi static buffer sizes are tuned via sdkconfig.defaults
+// (CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM, _STATIC_TX_BUFFER_NUM,
+// _CACHE_TX_BUFFER_NUM, _MGMT_SBUF_NUM, _RX_BA_WIN) so they coexist with
+// BLE HID and the display on the ESP32-S3's limited internal RAM. The
+// WIFI_INIT_CONFIG_DEFAULT() macro picks them up from Kconfig.
 
 // State variables
 static bool s_wifi_initialized = false;
 static bool s_wifi_connected = false;
 static bool s_wifi_ap_mode = false;
 static char s_ip_address[16] = {0};
-static uint32_t s_ip_raw = 0;
 static int s_retry_count = 0;
 
 // FreeRTOS event group for connection synchronization
@@ -113,7 +110,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 
                 s_wifi_connected = false;
                 s_ip_address[0] = '\0';
-                s_ip_raw = 0;
                 
                 // Update status LED to show disconnected state
                 status_led_set_wifi_status(false);
@@ -165,7 +161,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         switch (event_id) {
             case IP_EVENT_STA_GOT_IP: {
                 ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
-                s_ip_raw = event->ip_info.ip.addr;
                 snprintf(s_ip_address, sizeof(s_ip_address), IPSTR,
                          IP2STR(&event->ip_info.ip));
                 ESP_LOGI(TAG, "Got IP address: %s", s_ip_address);
@@ -194,7 +189,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 ESP_LOGW(TAG, "Lost IP address");
                 s_wifi_connected = false;
                 s_ip_address[0] = '\0';
-                s_ip_raw = 0;
                 
                 // Update status LED to show disconnected state
                 status_led_set_wifi_status(false);
@@ -244,15 +238,8 @@ bool wifi_init(void)
         }
     }
 
-    // Initialize WiFi with a smaller internal-RAM footprint than the ESP-IDF
-    // defaults. BLE HID is already running by this point and also reserves
-    // internal memory.
+    // Buffer sizes come from sdkconfig (see comment near top of file).
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    cfg.static_rx_buf_num = WIFI_STATIC_RX_BUFFERS;
-    cfg.static_tx_buf_num = WIFI_STATIC_TX_BUFFERS;
-    cfg.cache_tx_buf_num = WIFI_CACHE_TX_BUFFERS;
-    cfg.mgmt_sbuf_num = WIFI_MGMT_SHORT_BUFFERS;
-
     esp_err_t wifi_err = esp_wifi_init(&cfg);
     if (wifi_err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(wifi_err));
@@ -391,12 +378,6 @@ void wifi_disconnect(void)
     
     s_wifi_connected = false;
     s_ip_address[0] = '\0';
-    s_ip_raw = 0;
-}
-
-bool wifi_is_ready(void)
-{
-    return s_wifi_initialized;
 }
 
 bool wifi_is_connected(void)
@@ -417,37 +398,6 @@ bool wifi_get_ip(char* buffer, size_t length)
     strncpy(buffer, s_ip_address, length - 1);
     buffer[length - 1] = '\0';
     return true;
-}
-
-uint32_t wifi_get_ip_raw(void)
-{
-    return s_ip_raw;
-}
-
-void wifi_set_ready(bool ready)
-{
-    s_wifi_initialized = ready;
-    ESP_LOGI(TAG, "Hardware ready set to: %d", ready);
-}
-
-void wifi_set_connected(bool connected)
-{
-    s_wifi_connected = connected;
-    ESP_LOGI(TAG, "Connected set to: %d", connected);
-
-    if (!connected) {
-        s_ip_address[0] = '\0';
-        s_ip_raw = 0;
-    }
-}
-
-void wifi_set_ip_address(const char* ip)
-{
-    if (ip && ip[0] != '\0') {
-        strncpy(s_ip_address, ip, sizeof(s_ip_address) - 1);
-        s_ip_address[sizeof(s_ip_address) - 1] = '\0';
-        ESP_LOGI(TAG, "IP address cached: %s", s_ip_address);
-    }
 }
 
 const char* wifi_get_ip_address(void)

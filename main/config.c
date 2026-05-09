@@ -675,13 +675,3 @@ const char* get_mdns_hostname(void)
     }
     return s_mdns_hostname;
 }
-
-/**
- * @brief Get the connected WiFi SSID (alias for config_get_ssid)
- *
- * Provided for compatibility with the Pico W codebase.
- */
-const char* get_connected_ssid(void)
-{
-    return config_get_ssid();
-}

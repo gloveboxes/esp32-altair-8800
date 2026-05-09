@@ -54,13 +54,6 @@ wifi_result_t wifi_connect(void);
 void wifi_disconnect(void);
 
 /**
- * @brief Check if WiFi hardware is ready
- *
- * @return true if WiFi driver is initialized
- */
-bool wifi_is_ready(void);
-
-/**
  * @brief Check if connected to WiFi network
  *
  * @return true if connected and has IP address
@@ -75,28 +68,6 @@ bool wifi_is_connected(void);
  * @return true if IP address was copied, false if not connected
  */
 bool wifi_get_ip(char* buffer, size_t length);
-
-/**
- * @brief Get the raw IP address as 32-bit integer
- *
- * @return IP address in network byte order, or 0 if not connected
- */
-uint32_t wifi_get_ip_raw(void);
-
-/**
- * @brief Set WiFi ready state (internal use)
- */
-void wifi_set_ready(bool ready);
-
-/**
- * @brief Set WiFi connected state (internal use)
- */
-void wifi_set_connected(bool connected);
-
-/**
- * @brief Set cached IP address (internal use)
- */
-void wifi_set_ip_address(const char* ip);
 
 /**
  * @brief Get cached IP address string
