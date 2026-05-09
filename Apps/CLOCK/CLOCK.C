@@ -3,8 +3,8 @@
  * BDS C 1.6 on CP/M / Altair 8800 emulator
  *
  * Reads ESP32 UTC wall clock through port 42, ticks every 50 ms,
- * redraws HH:MM:SS as VT100 character blocks shaped like
- * classic 7-segment digits.
+ * redraws HH:MM as chunky VT100 character blocks shaped like
+ * classic 7-segment digits. The colon blinks every second.
  *
  * The host port driver (port_drivers/time_io.c) fills its
  * request buffer with a 19-char "YYYY-MM-DDTHH:MM:SS" UTC
@@ -31,7 +31,6 @@
 
 #define BROW 10
 #define BCOL 13
-#define SCOL 19
 
 #define SCRW 80
 #define SCRH 30
@@ -57,10 +56,6 @@ int offset;
 /* previous shown digits (-1 = force redraw) */
 int ph0, ph1;
 int pm0, pm1;
-int ps0, ps1;
-
-/* whether seconds field fits on screen */
-int gotsec;
 
 /* time string buffer */
 char tbuf[24];
@@ -71,10 +66,12 @@ char ebuf[112];
 /* current parsed display digits */
 int gh0, gh1;
 int gm0, gm1;
-int gs0, gs1;
 
-/* active time text: HH:MM:SS */
-char timtxt[9];
+/* blink phase for the colon (toggles each parsed second) */
+int blink;
+
+/* active time text: HH:MM */
+char timtxt[6];
 
 /* Seven-segment-ish rows. Each glyph is 5 chars wide. */
 char *dig0[7];
@@ -415,18 +412,6 @@ int col;
     return 0;
 }
 
-int cell1(on, col)
-int on;
-int col;
-{
-    if (on)
-        setsgr(col);
-    else
-        rstcol();
-    chout(' ');
-    return 0;
-}
-
 char *glyph(ch, row)
 int ch;
 int row;
@@ -458,63 +443,32 @@ int col;
     return 0;
 }
 
-int drg1(s, col)
-char *s;
-int col;
-{
-    int i;
-
-    for (i = 0; i < 5; i = i + 1)
-        cell1(s[i] != ' ', col);
-    rstcol();
-    chout(' ');
-    return 0;
-}
-
 /* ---- Layout ---- */
 
-/* per-position bg colors: HH : MM : SS  (colons get white) */
-int dcol[8];
+/* per-position bg colors: HH : MM  (colon gets white) */
+int dcol[5];
 
 int drall()
 {
     int r;
     int i;
-    int base;
 
     timtxt[0] = gh0 + '0';
     timtxt[1] = gh1 + '0';
     timtxt[2] = ':';
     timtxt[3] = gm0 + '0';
     timtxt[4] = gm1 + '0';
-    timtxt[5] = ':';
-    timtxt[6] = gs0 + '0';
-    timtxt[7] = gs1 + '0';
-    timtxt[8] = 0;
+    timtxt[5] = 0;
 
-    /* Blink: hide colons on odd seconds. */
-    if (gs1 & 1)
-    {
+    /* Blink: hide colon on alternating seconds. */
+    if (blink)
         timtxt[2] = ' ';
-        timtxt[5] = ' ';
-    }
-
-    base = BCOL;
-    if (gotsec)
-        base = SCOL;
 
     for (r = 0; r < 7; r = r + 1)
     {
-        curmv(BROW + r, base);
-        for (i = 0; i < 8; i = i + 1)
-        {
-            if (!gotsec && i > 4)
-                break;
-            if (gotsec)
-                drg1(glyph(timtxt[i], r), dcol[i]);
-            else
-                drg2(glyph(timtxt[i], r), dcol[i]);
-        }
+        curmv(BROW + r, BCOL);
+        for (i = 0; i < 5; i = i + 1)
+            drg2(glyph(timtxt[i], r), dcol[i]);
     }
     return 0;
 }
@@ -557,29 +511,18 @@ int setup()
     digc[3] = "     "; digc[4] = "  #  "; digc[5] = "  #  ";
     digc[6] = "     ";
 
-    /* Bold per-position colors:
-     *   H1 red, H2 orange/yellow, : white,
-     *   M1 green, M2 cyan, : white,
-     *   S1 blue, S2 magenta
+    /* Rainbow gradient: walks the spectrum left to right.
+     *   H1 red, H2 yellow, : white, M1 green, M2 cyan
      */
-    dcol[0] = 101;  /* bright red bg   */
-    dcol[1] = 103;  /* bright yellow   */
-    dcol[2] = 107;  /* bright white    */
-    dcol[3] = 102;  /* bright green    */
-    dcol[4] = 106;  /* bright cyan     */
-    dcol[5] = 107;  /* bright white    */
-    dcol[6] = 104;  /* bright blue     */
-    dcol[7] = 105;  /* bright magenta  */
+    dcol[0] = 101;  /* bright red     */
+    dcol[1] = 103;  /* bright yellow  */
+    dcol[2] = 107;  /* bright white   */
+    dcol[3] = 102;  /* bright green   */
+    dcol[4] = 106;  /* bright cyan    */
 
     ph0 = -1; ph1 = -1;
     pm0 = -1; pm1 = -1;
-    ps0 = -1; ps1 = -1;
-
-    /* Slim HH:MM:SS spans 48 cols; chunky HH:MM spans 55 cols. */
-    if (SCOL + 48 <= 80)
-        gotsec = 1;
-    else
-        gotsec = 0;
+    blink = 0;
 
     return 0;
 }
@@ -593,6 +536,8 @@ int main()
     int n;
     int tick;
     int hh;
+    int sec;
+    int nblink;
 
     setup();
     lofset();
@@ -625,8 +570,7 @@ int main()
                 gh1 = tbuf[12] - '0';
                 gm0 = tbuf[14] - '0';
                 gm1 = tbuf[15] - '0';
-                gs0 = tbuf[17] - '0';
-                gs1 = tbuf[18] - '0';
+                sec = (tbuf[17] - '0') * 10 + (tbuf[18] - '0');
 
                 /* UTC -> local using env OFFSET */
                 hh = adjhr(gh0 * 10 + gh1);
@@ -635,17 +579,18 @@ int main()
 
                 chgh = (gh0 != ph0) || (gh1 != ph1);
                 chgm = (gm0 != pm0) || (gm1 != pm1);
-                chgs = (gs0 != ps0) || (gs1 != ps1);
+                nblink = sec & 1;
+                chgs = (nblink != blink);
+                blink = nblink;
 
                 if (chgh || chgm || chgs)
                 {
                     drall();
                     ph0 = gh0; ph1 = gh1;
                     pm0 = gm0; pm1 = gm1;
-                    ps0 = gs0; ps1 = gs1;
                 }
 
-                /* Refresh uptime once per second (when seconds change). */
+                /* Refresh uptime once per second (when blink toggles). */
                 if (chgs || chgm || chgh)
                     shoupt(BROW + DHGT + 6, 30);
             }
