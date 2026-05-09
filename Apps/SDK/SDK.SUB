@@ -1,0 +1,17 @@
+ft -g file://sdk/dxtimer.h
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxterm.h
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxsys.h
+ft -g file://sdk/dxsys.c
+
+cc dxtimer
+cc dxterm
+cc dxsys
+
+era dxtimer.c
+era dxtimer.h
+era dxterm.c
+era dxterm.h
+era dxsys.c
+era dxsys.h

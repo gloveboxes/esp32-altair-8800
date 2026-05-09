@@ -1,0 +1,19 @@
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxtimer.h
+ft -g file://sdk/long.c
+
+cc dxtimer
+cc long
+
+ft -g file://onboard/onboard.c
+
+cc onboard
+clink onboard dxtimer long
+
+a:pip a:onboard.com=onboard.com
+
+era onboard.*
+era dx*.*
+era long.*
+
+mcpdone onboard

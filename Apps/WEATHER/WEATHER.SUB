@@ -1,0 +1,27 @@
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxtimer.h
+
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxterm.h
+
+ft -g file://sdk/dxsys.c
+ft -g file://sdk/dxsys.h
+
+ft -g file://sdk/long.c
+
+cc dxtimer
+cc dxterm
+cc dxsys
+cc long
+
+ft -g file://weather.c
+
+cc weather
+clink weather dxtimer dxterm dxsys long
+
+a:pip a:weather.com=weather.com
+
+era dx*.*
+era long.*
+era weather.c
+mcpdone weather

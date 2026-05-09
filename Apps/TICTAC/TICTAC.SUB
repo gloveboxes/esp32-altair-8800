@@ -1,0 +1,41 @@
+era dxsys.c
+era dxsys.h
+era dxsys.crl
+era dxtimer.c
+era dxtimer.h
+era dxtimer.crl
+era dxterm.c
+era dxterm.h
+era dxterm.crl
+era tictac.c
+era tictac.crl
+
+ft -g file://sdk/dxsys.c
+ft -g file://sdk/dxsys.h
+cc dxsys
+era dxsys.c
+
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxtimer.h
+cc dxtimer
+era dxtimer.c
+
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxterm.h
+cc dxterm
+era dxterm.c
+
+ft -g file://tictac/tictac.c
+cc tictac
+era tictac.c
+era dxsys.h
+era dxtimer.h
+era dxterm.h
+
+clink tictac dxterm dxtimer dxsys
+
+a:pip a:tictac.com=tictac.com
+
+era dx*.*
+era tictac.crl
+mcpdone tictac

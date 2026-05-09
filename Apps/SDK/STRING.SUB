@@ -1,0 +1,17 @@
+ft -g file://sdk/string.c
+ft -g file://sdk/string.h
+ft -g file://sdk/stringt.c
+ft -g file://sdk/dxsys.c
+ft -g file://sdk/dxsys.h  
+
+era stringt
+
+cc dxsys
+cc string
+cc stringt 
+clink stringt string dxsys
+
+era string.c
+era dxsys.* 
+stringt
+era stringt.*

@@ -1,0 +1,17 @@
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxterm.h
+ft -g file://sdk/dxsys.h
+ft -g file://sdk/dxsys.C
+
+ft -g file://snake/snake.c
+
+cc dxsys
+cc dxterm
+cc snake
+clink snake dxterm dxsys
+
+a:pip a:snake.com=snake.com
+
+era snake.*
+era dx*.*
+mcpdone snake

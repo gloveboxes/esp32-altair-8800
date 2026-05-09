@@ -1,0 +1,19 @@
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxtimer.h
+
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxterm.h
+
+ft -g file://sdk/dxsys.c
+ft -g file://sdk/dxsys.h
+
+cc dxterm
+cc dxtimer
+cc dxsys
+
+ft -g file://game/game.c
+
+cc game
+clink game dxtimer dxterm dxsys
+
+era dx*.*

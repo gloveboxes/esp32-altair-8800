@@ -1,0 +1,13 @@
+ft -g file://pico/pico.c
+ft -g file://sdk/long.c
+
+cc long
+cc pico
+clink pico long
+
+a:pip a:pico.com=pico.com
+
+era pico.*
+era long.*
+
+mcpdone pico

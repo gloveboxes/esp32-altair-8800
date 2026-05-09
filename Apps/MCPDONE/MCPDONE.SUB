@@ -1,0 +1,9 @@
+era mcpdone.c
+era mcpdone.crl
+
+ft -g file://mcpdone/mcpdone.c
+cc mcpdone
+clink mcpdone
+
+era mcpdone.c
+era mcpdone.crl

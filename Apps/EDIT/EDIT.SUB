@@ -1,0 +1,5 @@
+ft -g file://edit/edit.c
+cc edit
+clink edit
+a:pip a:edit.com=edit.com
+era edit.*

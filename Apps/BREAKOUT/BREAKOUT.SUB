@@ -1,0 +1,43 @@
+era dxsys.c
+era dxsys.h
+era dxsys.crl
+era dxtimer.c
+era dxtimer.h
+era dxtimer.crl
+era dxterm.c
+era dxterm.h
+era dxterm.crl
+era breakout.c
+era breakout.crl
+
+ft -g file://sdk/dxsys.c
+ft -g file://sdk/dxsys.h
+
+cc dxsys
+era dxsys.c
+era dxsys.h
+
+ft -g file://sdk/dxtimer.c
+ft -g file://sdk/dxtimer.h
+cc dxtimer
+era dxtimer.c
+era dxtimer.h
+
+ft -g file://sdk/dxterm.c
+ft -g file://sdk/dxterm.h
+cc dxterm
+era dxterm.c
+era dxterm.h
+
+ft -g file://breakout/breakout.c
+cc breakout
+era breakout.c
+
+clink breakout dxterm dxtimer dxsys
+
+a:pip a:breakout.com=breakout.com
+
+era dx*.*
+era breakout.crl
+;submit breakout
+mcpdone breakout
