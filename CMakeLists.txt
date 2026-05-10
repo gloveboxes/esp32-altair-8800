@@ -2,6 +2,66 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
+# --------------------------------------------------------------------
+# Require ESP-IDF v6.0.1 or newer.
+#
+# IDF_PATH must point at a valid ESP-IDF install. If it's missing or
+# the version is older than the minimum, fail fast with a clear
+# message instead of producing a confusing "Unknown CMake command
+# idf_build_set_property" error from a partial include.
+# --------------------------------------------------------------------
+set(_altair_min_idf_major 6)
+set(_altair_min_idf_minor 0)
+set(_altair_min_idf_patch 1)
+set(_altair_min_idf "v${_altair_min_idf_major}.${_altair_min_idf_minor}.${_altair_min_idf_patch}")
+set(_altair_example_idf_path "$ENV{HOME}/.espressif/${_altair_min_idf}/esp-idf")
+
+if(NOT DEFINED ENV{IDF_PATH})
+    message(FATAL_ERROR
+        "IDF_PATH is not set. This project requires ESP-IDF ${_altair_min_idf} or newer. "
+        "Run: source ${_altair_example_idf_path}/export.sh")
+endif()
+
+if(NOT EXISTS "$ENV{IDF_PATH}/tools/cmake/project.cmake")
+    message(FATAL_ERROR
+        "IDF_PATH=$ENV{IDF_PATH} does not contain tools/cmake/project.cmake. "
+        "This project requires ESP-IDF ${_altair_min_idf} or newer "
+        "(e.g. installed at ${_altair_example_idf_path}). "
+        "Run: source <esp-idf>/export.sh")
+endif()
+
+# Read tools/cmake/version.cmake to verify minimum version.
+if(EXISTS "$ENV{IDF_PATH}/tools/cmake/version.cmake")
+    file(READ "$ENV{IDF_PATH}/tools/cmake/version.cmake" _altair_ver_contents)
+    string(REGEX MATCH "IDF_VERSION_MAJOR[ \t]+([0-9]+)" _ "${_altair_ver_contents}")
+    set(_altair_idf_major "${CMAKE_MATCH_1}")
+    string(REGEX MATCH "IDF_VERSION_MINOR[ \t]+([0-9]+)" _ "${_altair_ver_contents}")
+    set(_altair_idf_minor "${CMAKE_MATCH_1}")
+    string(REGEX MATCH "IDF_VERSION_PATCH[ \t]+([0-9]+)" _ "${_altair_ver_contents}")
+    set(_altair_idf_patch "${CMAKE_MATCH_1}")
+    set(_altair_idf_version "v${_altair_idf_major}.${_altair_idf_minor}.${_altair_idf_patch}")
+
+    set(_altair_idf_too_old FALSE)
+    if(_altair_idf_major LESS _altair_min_idf_major)
+        set(_altair_idf_too_old TRUE)
+    elseif(_altair_idf_major EQUAL _altair_min_idf_major)
+        if(_altair_idf_minor LESS _altair_min_idf_minor)
+            set(_altair_idf_too_old TRUE)
+        elseif(_altair_idf_minor EQUAL _altair_min_idf_minor)
+            if(_altair_idf_patch LESS _altair_min_idf_patch)
+                set(_altair_idf_too_old TRUE)
+            endif()
+        endif()
+    endif()
+
+    if(_altair_idf_too_old)
+        message(FATAL_ERROR
+            "ESP-IDF ${_altair_idf_version} at $ENV{IDF_PATH} is too old. "
+            "This project requires ${_altair_min_idf} or newer.")
+    endif()
+    message(STATUS "ESP-IDF version check OK: ${_altair_idf_version} (minimum ${_altair_min_idf})")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(altair_esp32)
 

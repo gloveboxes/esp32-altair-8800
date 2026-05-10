@@ -1,6 +1,6 @@
 # ESP32-S3 Altair 8800 Emulator
 
-Altair 8800 emulator for ESP32-S3 boards, built with ESP-IDF v6.0. The project runs an Intel 8080/Altair environment with CP/M disks, physical display output, SD-card disk storage, WiFi setup, WebSocket terminal access, Bluetooth keyboard input, and an OpenAI-compatible chat I/O port for BDS C applications.
+Altair 8800 emulator for ESP32-S3 boards, built and tested with ESP-IDF v6.0.1 (minimum required). The project runs an Intel 8080/Altair environment with CP/M disks, physical display output, SD-card disk storage, WiFi setup, WebSocket terminal access, Bluetooth keyboard input, and an OpenAI-compatible chat I/O port for BDS C applications.
 
 ## Current Hardware Support
 
@@ -107,7 +107,7 @@ docs/                 Development notes
 
 ## Build Prerequisites
 
-- ESP-IDF v6.0.1 for `esp32s3`.
+- ESP-IDF v6.0.1 or newer for `esp32s3` (the build will fail with a clear error if an older ESP-IDF is sourced).
 - ESP-IDF VS Code extension, recommended for build/flash/monitor.
 - ESP32-S3 board matching one of the supported configs.
 - SD card formatted for the project disk layout when using CP/M disk images.
