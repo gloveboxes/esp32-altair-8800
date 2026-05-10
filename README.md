@@ -9,7 +9,7 @@ The project currently supports two ESP32-S3 board configurations:
 | Board | Display | Config defaults |
 |---|---|---|
 | WAVESHARE-ESP32-S3-Touch-LCD-3.5B | AXS15231B QSPI LCD, 480x320 VT100/front-panel display | `sdkconfig.WAVESHARE-ESP32-S3-Touch-LCD-3.5B.defaults` |
-| Freenove ESP32-S3 | ILI9341 TFT, 320x240 front panel | `sdkconfig.freenove.defaults` |
+| Freenove ESP32-S3 LCD 2.8 | ILI9341 TFT, 320x240 front panel | `sdkconfig.FREENOVE-ESP32-S3-LCD-2.8.defaults` |
 
 ## Features
 
@@ -112,9 +112,9 @@ docs/                 Development notes
 - ESP32-S3 board matching one of the supported configs.
 - SD card formatted for the project disk layout when using CP/M disk images.
 
-> **Install location.** This project expects ESP-IDF and its tools to live under `$HOME/.espressif/` — specifically `$HOME/.espressif/<version>/esp-idf/` for the SDK and `$HOME/.espressif/tools/` for the toolchain. The `.vscode/settings.json` paths use `${userHome}/.espressif/...` and assume this layout. If you install elsewhere, update those settings to match.
+> **Install location.** This project expects ESP-IDF and its tools to live under `$HOME/.espressif/` — specifically `$HOME/.espressif/<version>/esp-idf/` for the SDK and `$HOME/.espressif/tools/` for the toolchain. The ESP-IDF extension does not expand VS Code variables such as `${userHome}` in all of its own settings, so its `idf.*` paths in `.vscode/settings.json` are literal local paths. After cloning, run `python3 scripts/update_vscode_idf_paths.py` to rewrite those paths for your user account before building in VS Code.
 
-> **SDK version pinned in settings.** `.vscode/settings.json` hard-codes the v6.0.1 SDK path (`${userHome}/.espressif/v6.0.1/esp-idf`) along with version-specific subdirectories of the toolchain (e.g. `tools/xtensa-esp-elf/esp-15.2.0_20251204`, `tools/esp-clang/esp-20.1.1_20250829`, `python_env/idf6.0_py3.14_env`). When upgrading to a newer ESP-IDF, update these paths in `.vscode/settings.json` (and the `source` paths in `.vscode/tasks.json`) to match the new install. The CMake guard in `CMakeLists.txt` enforces only the *minimum* SDK version (v6.0.1) and is independent of these IDE paths.
+> **SDK version pinned in settings.** `.vscode/settings.json` hard-codes the v6.0.1 SDK path (for example `/Users/<you>/.espressif/v6.0.1/esp-idf`) along with version-specific subdirectories of the toolchain (e.g. `tools/xtensa-esp-elf/esp-15.2.0_20251204`, `tools/esp-clang/esp-20.1.1_20250829`, `python_env/idf6.0_py3.14_env`). When upgrading to a newer ESP-IDF, update these paths in `.vscode/settings.json` (and the `source` paths in `.vscode/tasks.json`) to match the new install. The CMake guard in `CMakeLists.txt` enforces only the *minimum* SDK version (v6.0.1) and is independent of these IDE paths.
 
 Install ESP-IDF tools for ESP32-S3 if needed:
 
@@ -122,11 +122,75 @@ Install ESP-IDF tools for ESP32-S3 if needed:
 $HOME/.espressif/v6.0.1/esp-idf/install.sh esp32s3
 ```
 
+Update the VS Code ESP-IDF extension paths for your local account:
+
+```bash
+python3 scripts/update_vscode_idf_paths.py
+```
+
+If ESP-IDF is installed somewhere other than `$HOME/.espressif/v6.0.1/esp-idf`, pass the paths explicitly:
+
+```bash
+python3 scripts/update_vscode_idf_paths.py \
+  --idf-path /path/to/esp-idf \
+  --tools-path /path/to/.espressif \
+  --python-env-path /path/to/python_env/idf6.0_py3.14_env
+```
+
 For CLI use, source ESP-IDF before running `idf.py`:
 
 ```bash
 source $HOME/.espressif/v6.0.1/esp-idf/export.sh
 ```
+
+### ESP-IDF environment for VS Code on macOS
+
+The ESP-IDF VS Code extension shells out to `cmake`/`ninja` using the **process environment of the VS Code app**, not your interactive shell. On macOS, GUI apps launched from the Dock/Finder/Spotlight do **not** read `~/.zshrc` or `~/.zprofile`, so shell-only ESP-IDF setup can be invisible to them. Symptom:
+
+```
+CMake Error at CMakeLists.txt:26 (message):
+  IDF_PATH=/Users/<you>/esp/esp-idf does not contain tools/cmake/project.cmake.
+```
+
+...or, mid-build, the bootloader sub-build fails with `IDF_PATH environment variable is different from inferred IDF_PATH` and a stale path.
+
+This workspace keeps the extension environment explicit in `.vscode/settings.json` via `idf.customExtraVars`: it sets `IDF_PATH`, `IDF_TOOLS_PATH`, `IDF_TARGET`, `IDF_PYTHON_ENV_PATH`, `PYTHON`, `ESP_IDF_VERSION`, and a deterministic ESP-IDF `PATH` that includes the v6.0.1 Python environment, `idf.py`, toolchains, OpenOCD, Ninja, and Homebrew CMake. Keep those `idf.*` values as literal absolute paths; using `${userHome}` there makes the ESP-IDF extension treat the setup as missing.
+
+Do **not** source `export.sh` from `~/.zshenv`. That file runs for every zsh invocation, including non-interactive probes from VS Code and tooling; sourcing ESP-IDF there can make `/bin/zsh` exit with code 1 and break terminals system-wide. If you want global static shell variables, keep `~/.zshenv` limited to simple exports only:
+
+```bash
+export IDF_PATH="$HOME/.espressif/v6.0.1/esp-idf"
+export IDF_TOOLS_PATH="$HOME/.espressif"
+```
+
+For interactive CLI use, source ESP-IDF in the terminal where you need it:
+
+```bash
+source "$HOME/.espressif/v6.0.1/esp-idf/export.sh"
+```
+
+After cloning, installing ESP-IDF, or changing ESP-IDF-related VS Code settings, **fully quit VS Code with Cmd+Q** (a window reload or "Reopen Folder" is not enough because VS Code's process environment is captured at launch). Then relaunch VS Code from the Dock or via `code <folder>`. Run **ESP-IDF: Doctor Command** and verify that `ESP-IDF Path`, `Virtual environment Python path`, `CMake`, `Ninja`, and `ESP-IDF Tools Path` are accessible. For CLI builds, source ESP-IDF first and then check the terminal environment:
+
+```bash
+source "$HOME/.espressif/v6.0.1/esp-idf/export.sh"
+echo $IDF_PATH
+# → /Users/<you>/.espressif/v6.0.1/esp-idf
+```
+
+> If you upgrade ESP-IDF, update `.vscode/settings.json`, `.vscode/tasks.json`, and any static `~/.zshenv` exports to the new path.
+
+### CMake Tools extension note
+
+If you have the Microsoft **CMake Tools** extension installed, it will try to configure this project directly with `cmake` (without sourcing `export.sh`) and fail. `.vscode/settings.json` already disables its auto-configure for this workspace and points its source dir at a non-existent folder so it stays out of the way:
+
+```jsonc
+"cmake.configureOnOpen": false,
+"cmake.configureOnEdit": false,
+"cmake.automaticReconfigure": false,
+"cmake.sourceDirectory": "${workspaceFolder}/.no-cmake-tools"
+```
+
+Always build via the **ESP-IDF** extension or the workspace tasks (`Altair: Switch config to …`), not the CMake Tools status-bar buttons.
 
 ## Swapping Target Board Configs
 
@@ -139,7 +203,7 @@ When switching boards, remove the generated `sdkconfig`, rebuild with the common
 This workspace includes two VS Code tasks for switching the active generated config:
 
 - `Altair: Switch config to Waveshare 3.5B AXS15231B`
-- `Altair: Switch config to Freenove ILI9341`
+- `Altair: Switch config to Freenove ESP32-S3 LCD 2.8`
 
 Run one from **Terminal > Run Task...** or the command palette with **Tasks: Run Task**. Each task sources ESP-IDF, removes the generated `sdkconfig`, and runs `idf.py reconfigure` with the common defaults plus the selected board defaults. After the task completes, use the normal ESP-IDF build and flash commands for that board.
 
@@ -151,11 +215,11 @@ idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.WAVESHARE-ESP32-S3-To
 idf.py -p /dev/cu.usbmodem2101 flash monitor
 ```
 
-### Switch to Freenove ILI9341
+### Switch to Freenove ESP32-S3 LCD 2.8
 
 ```bash
 rm -f sdkconfig
-idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.freenove.defaults" build
+idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.FREENOVE-ESP32-S3-LCD-2.8.defaults" build
 idf.py -p /dev/cu.usbmodem2101 flash monitor
 ```
 
@@ -214,9 +278,9 @@ idf.py build
 ## Configuration Files
 
 - `sdkconfig`: active generated configuration used by ESP-IDF.
-- `sdkconfig.defaults`: active defaults file used when regenerating `sdkconfig`.
+- `sdkconfig.defaults`: common defaults file used when regenerating `sdkconfig`.
 - `sdkconfig.WAVESHARE-ESP32-S3-Touch-LCD-3.5B.defaults`: Waveshare 3.5B defaults.
-- `sdkconfig.freenove.defaults`: Freenove defaults.
+- `sdkconfig.FREENOVE-ESP32-S3-LCD-2.8.defaults`: Freenove ESP32-S3 LCD 2.8 defaults.
 - `sdkconfig.freenove`: full generated Freenove sdkconfig snapshot.
 - `partitions.csv`: partition layout.
 

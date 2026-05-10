@@ -60,9 +60,26 @@ if(EXISTS "$ENV{IDF_PATH}/tools/cmake/version.cmake")
             "This project requires ${_altair_min_idf} or newer.")
     endif()
     message(STATUS "ESP-IDF version check OK: ${_altair_idf_version} (minimum ${_altair_min_idf})")
+    set(ENV{ESP_IDF_VERSION} "${_altair_idf_major}.${_altair_idf_minor}.${_altair_idf_patch}")
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
+if("$ENV{IDF_TARGET}" STREQUAL "esp32s3" OR "${IDF_TARGET}" STREQUAL "esp32s3")
+    if(DEFINED ENV{IDF_TOOLS_PATH})
+        set(_altair_idf_tools_path "$ENV{IDF_TOOLS_PATH}")
+    else()
+        set(_altair_idf_tools_path "$ENV{HOME}/.espressif")
+    endif()
+    set(_altair_xtensa_toolchain_dir "${_altair_idf_tools_path}/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin")
+    if(EXISTS "${_altair_xtensa_toolchain_dir}/xtensa-esp32s3-elf-gcc")
+        list(PREPEND CMAKE_PROGRAM_PATH "${_altair_xtensa_toolchain_dir}")
+        idf_build_set_property(EXTRA_CMAKE_ARGS
+            "-DCMAKE_PROGRAM_PATH=${_altair_xtensa_toolchain_dir}"
+            APPEND)
+    endif()
+endif()
+
 project(altair_esp32)
 
 # Keep enough file-descriptor space when increasing LWIP sockets

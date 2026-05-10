@@ -1,5 +1,5 @@
 {
-  "C_Cpp.default.compilerPath": "${env:HOME}/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
+  "C_Cpp.default.compilerPath": "${userHome}/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc",
   "C_Cpp.default.includePath": [
     "${workspaceFolder}/altair8800",
     "${workspaceFolder}/main",
@@ -9,7 +9,7 @@
     "${workspaceFolder}/drivers",
     "${workspaceFolder}/terminal",
     "${workspaceFolder}/build/config",
-    "${env:HOME}/.espressif/v6.0.1/esp-idf/components/**"
+    "${userHome}/.espressif/v6.0.1/esp-idf/components/**"
   ],
   "C_Cpp.files.exclude": {
     "**/build": true,
@@ -27,23 +27,35 @@
     "sdkconfig": "ini",
     "*.h": "c"
   },
-  "idf.espIdfPath": "${userHome}/.espressif/v6.0.1/esp-idf",
-  "idf.toolsPath": "${userHome}/.espressif",
-  "idf.pythonInstallPath": "${userHome}/.espressif/python_env/idf6.0_py3.14_env/bin/python",
+  "idf.espIdfPath": "/Users/dave/.espressif/v6.0.1/esp-idf",
+  "idf.toolsPath": "/Users/dave/.espressif",
+  "idf.pythonInstallPath": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin/python",
   "idf.buildPath": "${workspaceFolder}/build",
   "idf.port": "/dev/tty.usbmodem101",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32s3"
+    "IDF_TARGET": "esp32s3",
+    "IDF_PATH": "/Users/dave/.espressif/v6.0.1/esp-idf",
+    "IDF_TOOLS_PATH": "/Users/dave/.espressif",
+    "ESP_IDF_VERSION": "6.0.1",
+    "IDF_PYTHON_ENV_PATH": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env",
+    "PYTHON": "/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin/python",
+    "PATH": "/Users/dave/.espressif/v6.0.1/esp-idf/components/espcoredump:/Users/dave/.espressif/v6.0.1/esp-idf/components/partition_table:/Users/dave/.espressif/v6.0.1/esp-idf/components/app_update:/Users/dave/.espressif/tools/xtensa-esp-elf-gdb/16.3_20250913/xtensa-esp-elf-gdb/bin:/Users/dave/.espressif/tools/riscv32-esp-elf-gdb/16.3_20250913/riscv32-esp-elf-gdb/bin:/Users/dave/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin:/Users/dave/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin:/Users/dave/.espressif/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin:/Users/dave/.espressif/tools/esp32ulp-elf/2.38_20240113/esp32ulp-elf/bin:/Users/dave/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260304/openocd-esp32/bin:/Users/dave/.espressif/tools/ninja/1.12.1:/Users/dave/.espressif/python_env/idf6.0_py3.14_env/bin:/Users/dave/.espressif/v6.0.1/esp-idf/tools:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   },
   "idf.flashType": "UART",
-  "idf.currentSetup": "${userHome}/.espressif/v6.0.1/esp-idf",
-  "clangd.path": "${userHome}/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "idf.currentSetup": "/Users/dave/.espressif/v6.0.1/esp-idf",
+  "clangd.path": "/Users/dave/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=${workspaceFolder}/build"
-  ]
+    "--compile-commands-dir=/Users/dave/GitHub/esp32/esp32-altair-8800/build"
+  ],
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.sourceDirectory": "${workspaceFolder}/.no-cmake-tools",
+  "python.terminal.activateEnvironment": false,
+  "python.terminal.activateEnvInCurrentTerminal": false
 }
