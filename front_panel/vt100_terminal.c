@@ -8,6 +8,7 @@
  */
 
 #include "vt100_terminal.h"
+#include "altair_panel.h"
 #include "panel_display.h"
 
 #include "sdkconfig.h"
@@ -42,7 +43,7 @@
 #define STATUS_Y    TERM_H
 #define TERM_Y      0
 #define PRESENT_ROWS_PER_BAND 10
-#define STATUS_ONLY_PRESENT_INTERVAL_US 100000
+#define STATUS_ONLY_PRESENT_INTERVAL_US (PANEL_UPDATE_INTERVAL_MS * 1000)
 
 /* ---- Embedded 5x7 bitmap font ----------------------------------------- *
  *                                                                           *
