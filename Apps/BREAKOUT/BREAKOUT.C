@@ -497,20 +497,20 @@ int padhit()
     return 1;
 }
 
-/* brhit() - Test and clear brick at ball position. */
-int brhit(pr, pc)
-int pr;
-int pc;
+/* hitat() - Test and clear brick at screen row/column. */
+int hitat(sr, sc)
+int sr;
+int sc;
 {
     int r;
     int c;
     int x1;
     int y1;
 
-    y1 = by - BRO;
+    y1 = sr - BRO;
     if (y1 < 0 || y1 >= BRS)
         return 0;
-    x1 = bx - BCO;
+    x1 = sc - BCO;
     if (x1 < 0)
         return 0;
     c = x1 / (BRW + BRG);
@@ -532,15 +532,43 @@ int pc;
         spd = 3;
     drbrk(r, c);
     drstat();
-    if (pr == by)
-        dx = -dx;
-    else if (pc == bx)
-        dy = -dy;
-    else
-        dy = -dy;
     if (left == 0)
         state = DONE;
     return 1;
+}
+
+/* brhit() - Resolve brick collision for the current ball step. */
+int brhit(pr, pc)
+int pr;
+int pc;
+{
+    int hhit;
+    int vhit;
+
+    if (hitat(by, bx))
+    {
+        if (pr == by)
+            dx = -dx;
+        else if (pc == bx)
+            dy = -dy;
+        else
+            dy = -dy;
+        return 1;
+    }
+
+    if (pr == by || pc == bx)
+        return 0;
+
+    vhit = hitat(by, pc);
+    hhit = hitat(pr, bx);
+
+    if (vhit)
+        dy = -dy;
+    if (hhit)
+        dx = -dx;
+    if (vhit || hhit)
+        return 1;
+    return 0;
 }
 
 /* lost() - Handle a missed ball. */
