@@ -11,10 +11,12 @@
  * Time string ports (output):
  * - Port 41: Seconds since boot
  * - Port 42: UTC wall clock (ISO 8601 format)
- * - Port 43: Local wall clock (ISO 8601 format)
+ * - Port 43: Local wall clock using configured timezone offset (ISO 8601 format)
  */
 
 #include "port_drivers/time_io.h"
+
+#include "network_time.h"
 
 #include "esp_timer.h"
 
@@ -89,6 +91,11 @@ static size_t format_wall_clock(char* buffer, size_t buffer_length, bool utc)
     if (now == 0)
     {
         return format_boot_relative_time(buffer, buffer_length);
+    }
+
+    if (!utc)
+    {
+        network_time_apply_timezone();
     }
 
     struct tm* result = utc ? gmtime(&now) : localtime(&now);

@@ -2,16 +2,14 @@
  * CLOCK.C - 70s 7-segment psychedelic clock
  * BDS C 1.6 on CP/M / Altair 8800 emulator
  *
- * Reads ESP32 UTC wall clock through port 42, ticks every 50 ms,
+ * Reads ESP32 local wall clock through port 43, ticks every 50 ms,
  * redraws HH:MM as chunky VT100 character blocks shaped like
  * classic 7-segment digits. The colon blinks every second.
  *
  * The host port driver (port_drivers/time_io.c) fills its
- * request buffer with a 19-char "YYYY-MM-DDTHH:MM:SS" UTC
- * string when port 42 is written; the app reads byte-by-byte
- * from port 200 until it sees a 0, then adds the signed-hours
- * env variable OFFSET (loaded via DXENV) to convert to local
- * time. Set with:  ENV OFFSET=-5
+ * request buffer with a 19-char "YYYY-MM-DDTHH:MM:SS" local
+ * string when port 43 is written; the app reads byte-by-byte
+ * from port 200 until it sees a 0.
  *
  * Press ESC or Ctrl-C to quit.
  */
@@ -20,7 +18,7 @@
 
 #define T2H 28
 #define T2L 29
-#define TPRT 42
+#define TPRT 43
 #define UPRT 41
 #define RPRT 200
 
@@ -46,8 +44,6 @@
 #define WF_UNIT 11
 #define WF_ERR 12
 
-#define E_OK 0
-
 #define ESC 27
 #define KCC 3
 
@@ -71,8 +67,6 @@ int inp();
 int outp();
 int bdos();
 int bios();
-int e_init();
-int e_get();
 int atol();
 int itol();
 int ldiv();
@@ -80,18 +74,12 @@ int lmod();
 int ltoi();
 char *strcpy();
 
-/* signed UTC->local offset in hours (from env OFFSET) */
-int offset;
-
 /* previous shown digits (-1 = force redraw) */
 int ph0, ph1;
 int pm0, pm1;
 
 /* time string buffer */
 char tbuf[24];
-
-/* DXENV value buffer: e_get writes up to 63 chars plus nul */
-char ebuf[64];
 
 /* current parsed display digits */
 int gh0, gh1;
@@ -275,67 +263,6 @@ int getime()
 }
 
 /*
- * Parse a signed decimal integer from s. Returns the value;
- * stops at first non-digit. Accepts optional leading +/-.
- */
-int parsi(s)
-char *s;
-{
-    int v;
-    int sign;
-    int i;
-
-    v = 0;
-    sign = 1;
-    i = 0;
-    if (s[0] == '-')
-    {
-        sign = -1;
-        i = 1;
-    }
-    else if (s[0] == '+')
-    {
-        i = 1;
-    }
-    while (s[i] >= '0' && s[i] <= '9')
-    {
-        v = v * 10 + (s[i] - '0');
-        i = i + 1;
-    }
-    return v * sign;
-}
-
-/*
- * Load env OFFSET into the global `offset` variable. Defaults
- * to 0 if env file or variable is missing or unparseable.
- */
-int lofset()
-{
-    offset = 0;
-    if (e_init() != E_OK)
-        return 0;
-    if (e_get("OFFSET", ebuf) != E_OK)
-        return 0;
-    offset = parsi(ebuf);
-    /* sanity clamp */
-    if (offset < -23 || offset > 23)
-        offset = 0;
-    return offset;
-}
-
-/*
- * Apply the signed `offset` hours to hour hh. Wraps 0..23.
- */
-int adjhr(hh)
-int hh;
-{
-    hh = hh + offset;
-    while (hh < 0)  hh = hh + 24;
-    while (hh > 23) hh = hh - 24;
-    return hh;
-}
-
-/*
  * Read NUL-terminated reply from port 200 into buf.
  */
 int rdstr(buf, max)
@@ -364,7 +291,7 @@ char upbuf[32];
 
 /*
  * Render the centered footer line:
- *   UTC offset: +HH h    Uptime: HH:MM:SS
+ *   Uptime: HH:MM:SS
  * Always written as one full-width line so the uptime field
  * doesn't leave stale characters behind.
  */
@@ -374,8 +301,6 @@ int row;
     char lup[4], l3600[4], l60[4];
     char lhr[4], lrem[4], lmn[4], lsc[4];
     int hrs, mns, scs;
-    char sign;
-    int absoff;
 
     outp(UPRT, 1);
     rdstr(upbuf, 31);
@@ -390,14 +315,9 @@ int row;
     mns = ltoi(lmn);
     scs = ltoi(lsc);
 
-    sign = (offset >= 0) ? '+' : '-';
-    absoff = (offset >= 0) ? offset : -offset;
-
-    /* Line is 37 chars: "UTC offset: +10 h    Uptime: 00:00:00".
-     * Centered on 80-col screen: col = (80-37)/2 + 1 = 22. */
-    curmv(row, 22);
-    printf("\033[1;93mUTC offset: %c%d h    Uptime: %02d:%02d:%02d\033[0m",
-           sign, absoff, hrs, mns, scs);
+    curmv(row, 33);
+    printf("\033[1;93mUptime: %02d:%02d:%02d\033[0m",
+           hrs, mns, scs);
     return 0;
 }
 
@@ -670,13 +590,11 @@ int main()
     int key;
     int n;
     int tick;
-    int hh;
     int sec;
     int nblink;
     int wnow;
 
     setup();
-    lofset();
     cls();
     hidecr();
     brdr();
@@ -704,11 +622,6 @@ int main()
                 gm1 = tbuf[15] - '0';
                 sec = (tbuf[17] - '0') * 10 + (tbuf[18] - '0');
 
-                /* UTC -> local using env OFFSET */
-                hh = adjhr(gh0 * 10 + gh1);
-                gh0 = hh / 10;
-                gh1 = hh - gh0 * 10;
-
                 chgh = (gh0 != ph0) || (gh1 != ph1);
                 chgm = (gm0 != pm0) || (gm1 != pm1);
                 nblink = sec & 1;
@@ -722,7 +635,7 @@ int main()
                     pm0 = gm0; pm1 = gm1;
                 }
 
-                /* Refresh footer (UTC offset + uptime) once per second. */
+                /* Refresh footer once per second. */
                 if (chgs || chgm || chgh)
                     shoupt(FROW);
             }

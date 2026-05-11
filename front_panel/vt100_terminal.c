@@ -9,6 +9,7 @@
 
 #include "vt100_terminal.h"
 #include "altair_panel.h"
+#include "network_time.h"
 #include "panel_display.h"
 
 #include "sdkconfig.h"
@@ -18,6 +19,7 @@
 #endif
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 
 #include "esp_timer.h"
@@ -25,6 +27,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 /* ---- Layout constants -------------------------------------------------- */
 
@@ -42,8 +45,12 @@
 #define STATUS_H    20
 #define STATUS_Y    TERM_H
 #define TERM_Y      0
+#define STATUS_INFO_MARGIN 4
+#define STATUS_INFO_Y (STATUS_Y + 5)
 #define PRESENT_ROWS_PER_BAND 10
 #define STATUS_ONLY_PRESENT_INTERVAL_US (PANEL_UPDATE_INTERVAL_MS * 1000)
+#define VT100_RX_QUEUE_DEPTH 4096
+#define VT100_RX_BATCH_SIZE 1024
 
 /* ---- Embedded 5x7 bitmap font ----------------------------------------- *
  *                                                                           *
@@ -177,6 +184,7 @@ typedef struct {
 static terminal_cell_t  s_buffer[VT100_ROWS][VT100_COLS];
 static terminal_cell_t  s_snapshot[VT100_ROWS][VT100_COLS];
 static char             s_snapshot_ip[64];
+static char             s_snapshot_time[6];
 static uint32_t         s_dirty_rows;
 static int              s_col;
 static int              s_row;
@@ -187,13 +195,12 @@ static uint8_t          s_cur_bg;
 static bool             s_bold;
 static bool             s_cursor_visible;
 static bool             s_initialized;
+static QueueHandle_t    s_rx_queue;
 static SemaphoreHandle_t s_mutex;
 static bool             s_status_draw_partial;
 
-static uint16_t s_status_address;
-static uint8_t  s_status_data;
-static uint16_t s_status_bits;
 static char     s_status_ip[64];
+static char     s_status_time[6];
 static bool     s_status_dirty;
 
 typedef enum {
@@ -209,6 +216,8 @@ static vt_state_t s_vt_state;
 static int        s_csi_params[CSI_MAX_PARAMS];
 static int        s_csi_nparams;
 static bool       s_csi_priv;
+
+static void process_byte_locked(uint8_t c);
 
 static void mark_all_dirty(void)
 {
@@ -270,12 +279,11 @@ static void clear_row_default(int row)
 static void reset_terminal_state(bool preserve_status)
 {
     char saved_ip[sizeof(s_status_ip)];
-    uint16_t saved_address = s_status_address;
-    uint8_t saved_data = s_status_data;
-    uint16_t saved_status = s_status_bits;
+    char saved_time[sizeof(s_status_time)];
 
     if (preserve_status) {
         memcpy(saved_ip, s_status_ip, sizeof(saved_ip));
+        memcpy(saved_time, s_status_time, sizeof(saved_time));
     }
 
     s_col = 0;
@@ -290,14 +298,10 @@ static void reset_terminal_state(bool preserve_status)
     reset_parser();
 
     s_status_ip[0] = '\0';
-    s_status_address = 0;
-    s_status_data = 0;
-    s_status_bits = 0;
+    snprintf(s_status_time, sizeof(s_status_time), "--:--");
     if (preserve_status) {
         memcpy(s_status_ip, saved_ip, sizeof(s_status_ip));
-        s_status_address = saved_address;
-        s_status_data = saved_data;
-        s_status_bits = saved_status;
+        memcpy(s_status_time, saved_time, sizeof(s_status_time));
     }
     s_status_dirty = HAS_STATUS_BAR;
 
@@ -588,19 +592,49 @@ static void draw_status_text(const char *text, int x, int y, panel_color_t fg, p
     }
 }
 
-static void draw_status_leds(uint32_t bits, int count, int x, int y, panel_color_t on, panel_color_t off)
+static void format_status_time(char *buffer, size_t buffer_len)
 {
-    for (int bit = count - 1; bit >= 0; bit--) {
-        if (s_status_draw_partial) {
-            panel_display_status_region_fill_rect(x, y - STATUS_Y, 4, 4, (bits & (1UL << bit)) ? on : off);
-        } else {
-            panel_display_fill_rect(x, y, 4, 4, (bits & (1UL << bit)) ? on : off);
-        }
-        x += 6;
+    time_t now = time(NULL);
+    struct tm timeinfo;
+
+    network_time_apply_timezone();
+    if (now <= 0 || localtime_r(&now, &timeinfo) == NULL ||
+        (timeinfo.tm_year + 1900) < 2024) {
+        snprintf(buffer, buffer_len, "--:--");
+        return;
+    }
+
+    strftime(buffer, buffer_len, "%H:%M", &timeinfo);
+}
+
+static bool update_status_time_locked(void)
+{
+    char time_text[sizeof(s_status_time)];
+
+    format_status_time(time_text, sizeof(time_text));
+    if (strncmp(time_text, s_status_time, sizeof(s_status_time)) == 0) {
+        return false;
+    }
+
+    memcpy(s_status_time, time_text, sizeof(s_status_time));
+    s_status_dirty = true;
+    return true;
+}
+
+static void drain_rx_queue_locked(void)
+{
+    if (!s_rx_queue) return;
+
+    uint8_t c = 0;
+    size_t count = 0;
+    while (count < VT100_RX_BATCH_SIZE &&
+           xQueueReceive(s_rx_queue, &c, 0) == pdTRUE) {
+        process_byte_locked(c);
+        count++;
     }
 }
 
-static void draw_status_bar(uint16_t address, uint8_t data, uint16_t status, const char *ip_text)
+static void draw_status_bar(const char *ip_text, const char *time_text)
 {
     if (!HAS_STATUS_BAR) return;
 
@@ -609,8 +643,6 @@ static void draw_status_bar(uint16_t address, uint8_t data, uint16_t status, con
     const panel_color_t text = 0xB65B;
     const panel_color_t title = PANEL_COLOR_WHITE;
     const panel_color_t sub = 0x8D13;
-    const panel_color_t led_on = PANEL_COLOR_RED;
-    const panel_color_t led_off = 0x3000;
 
     s_status_draw_partial = panel_display_status_region_supported();
     if (s_status_draw_partial) {
@@ -622,18 +654,14 @@ static void draw_status_bar(uint16_t address, uint8_t data, uint16_t status, con
     }
 
     if (ip_text[0] != '\0') {
-        draw_status_text(ip_text, 4, STATUS_Y + 5, text, bg);
+        draw_status_text(ip_text, STATUS_INFO_MARGIN, STATUS_INFO_Y, text, bg);
     }
 
     draw_status_text("ALTAIR 8800", (panel_display_width() - 11 * CELL_W) / 2, STATUS_Y + 1, title, bg);
     draw_status_text("COMPUTER", (panel_display_width() - 8 * CELL_W) / 2, STATUS_Y + 10, sub, bg);
 
-    int data_x = panel_display_width() - 4 - (8 * 6 - 2);
-    int status_x = data_x - 8 - (10 * 6 - 2);
-    int address_x = panel_display_width() - 4 - (16 * 6 - 2);
-    draw_status_leds(status, 10, status_x, STATUS_Y + 3, led_on, led_off);
-    draw_status_leds(data, 8, data_x, STATUS_Y + 3, led_on, led_off);
-    draw_status_leds(address, 16, address_x, STATUS_Y + 13, led_on, led_off);
+    int time_x = panel_display_width() - STATUS_INFO_MARGIN - (int)strlen(time_text) * CELL_W;
+    draw_status_text(time_text, time_x, STATUS_INFO_Y, text, bg);
     s_status_draw_partial = false;
 }
 
@@ -746,24 +774,29 @@ static void process_byte_locked(uint8_t c)
 
 void vt100_terminal_init(void)
 {
+    if (!s_rx_queue) {
+        s_rx_queue = xQueueCreate(VT100_RX_QUEUE_DEPTH, sizeof(uint8_t));
+    }
     if (!s_mutex) {
         s_mutex = xSemaphoreCreateMutex();
     }
-    if (!s_mutex) {
+    if (!s_rx_queue || !s_mutex) {
         return;
     }
 
+    xQueueReset(s_rx_queue);
     reset_terminal_state(false);
+    format_status_time(s_status_time, sizeof(s_status_time));
     s_initialized = true;
 
     panel_display_fill_screen(HAS_STATUS_BAR ? PANEL_COLOR_BLACK : PANEL_COLOR_WHITE);
     if (HAS_STATUS_BAR && !panel_display_status_region_supported()) {
-        draw_status_bar(s_status_address, s_status_data, s_status_bits, s_status_ip);
+        draw_status_bar(s_status_ip, s_status_time);
         s_status_dirty = false;
     }
     panel_display_present();
     if (HAS_STATUS_BAR && panel_display_status_region_supported()) {
-        draw_status_bar(s_status_address, s_status_data, s_status_bits, s_status_ip);
+        draw_status_bar(s_status_ip, s_status_time);
         panel_display_status_region_present();
         s_status_dirty = false;
     }
@@ -771,11 +804,18 @@ void vt100_terminal_init(void)
 
 void vt100_terminal_putchar(uint8_t c)
 {
-    if (!s_initialized || !s_mutex) return;
+    bool queued;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    process_byte_locked(c);
-    xSemaphoreGive(s_mutex);
+    if (!s_initialized || !s_rx_queue) return;
+
+    queued = xQueueSend(s_rx_queue, &c, 0) == pdTRUE;
+    if (!queued) {
+        uint8_t discard;
+        xQueueReceive(s_rx_queue, &discard, 0);
+        queued = xQueueSend(s_rx_queue, &c, 0) == pdTRUE;
+    }
+
+    (void)queued;
 }
 
 void vt100_terminal_flush(void)
@@ -785,9 +825,10 @@ void vt100_terminal_flush(void)
     static int64_t s_last_status_only_present_us = 0;
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        printf("[vt100] flush: mutex take TIMEOUT (held by puchar/set_ip/update_status)\n");
+        printf("[vt100] flush: mutex take TIMEOUT (held by set_ip/update_status)\n");
         return;
     }
+    drain_rx_queue_locked();
     uint32_t dirty_rows = s_dirty_rows;
     s_dirty_rows = 0;
     bool status_dirty = s_status_dirty;
@@ -795,11 +836,9 @@ void vt100_terminal_flush(void)
     int cursor_col = s_col;
     int cursor_row = s_row;
     bool cursor_visible = s_cursor_visible;
-    uint16_t status_address = s_status_address;
-    uint8_t status_data = s_status_data;
-    uint16_t status_bits = s_status_bits;
     if (dirty_rows) memcpy(s_snapshot, s_buffer, sizeof(s_snapshot));
     memcpy(s_snapshot_ip, s_status_ip, sizeof(s_snapshot_ip));
+    memcpy(s_snapshot_time, s_status_time, sizeof(s_snapshot_time));
     xSemaphoreGive(s_mutex);
 
     if (!dirty_rows && !status_dirty) return;
@@ -841,7 +880,7 @@ void vt100_terminal_flush(void)
     }
 
     if (status_dirty && !panel_display_status_region_supported()) {
-        draw_status_bar(status_address, status_data, status_bits, s_snapshot_ip);
+        draw_status_bar(s_snapshot_ip, s_snapshot_time);
     }
 
     int64_t render_dur_us = esp_timer_get_time() - render_start_us;
@@ -854,11 +893,11 @@ void vt100_terminal_flush(void)
     if (dirty_rows) {
         present_dirty_text_bands(dirty_rows);
         if (HAS_STATUS_BAR && panel_display_status_region_supported()) {
-            draw_status_bar(status_address, status_data, status_bits, s_snapshot_ip);
+            draw_status_bar(s_snapshot_ip, s_snapshot_time);
             panel_display_status_region_present();
         }
     } else if (HAS_STATUS_BAR && status_dirty && panel_display_status_region_supported()) {
-        draw_status_bar(status_address, status_data, status_bits, s_snapshot_ip);
+        draw_status_bar(s_snapshot_ip, s_snapshot_time);
         panel_display_status_region_present();
     } else if (status_dirty) {
         panel_display_present();
@@ -874,14 +913,20 @@ void vt100_terminal_flush(void)
 
 void vt100_terminal_update_status(uint16_t address, uint8_t data, uint16_t status)
 {
+    (void)address;
+    (void)data;
+    (void)status;
     if (!HAS_STATUS_BAR || !s_initialized || !s_mutex) return;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    if (address != s_status_address || data != s_status_data || status != s_status_bits) {
-        s_status_address = address;
-        s_status_data = data;
-        s_status_bits = status;
-        s_status_dirty = true;
-    }
+    update_status_time_locked();
+    xSemaphoreGive(s_mutex);
+}
+
+void vt100_terminal_refresh_status_time(void)
+{
+    if (!HAS_STATUS_BAR || !s_initialized || !s_mutex) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    update_status_time_locked();
     xSemaphoreGive(s_mutex);
 }
 
@@ -889,12 +934,17 @@ void vt100_terminal_set_ip(const char *ip_addr, const char *hostname)
 {
     (void)hostname;
     if (!HAS_STATUS_BAR || !s_initialized || !s_mutex) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    char ip_text[sizeof(s_status_ip)];
     if (ip_addr != NULL && ip_addr[0] != '\0') {
-        snprintf(s_status_ip, sizeof(s_status_ip), "%s", ip_addr);
+        snprintf(ip_text, sizeof(ip_text), "%s", ip_addr);
     } else {
-        s_status_ip[0] = '\0';
+        ip_text[0] = '\0';
     }
-    s_status_dirty = true;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (strncmp(ip_text, s_status_ip, sizeof(s_status_ip)) != 0) {
+        memcpy(s_status_ip, ip_text, sizeof(s_status_ip));
+        s_status_dirty = true;
+    }
     xSemaphoreGive(s_mutex);
 }

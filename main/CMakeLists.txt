@@ -5,6 +5,7 @@ set(app_sources
     "ansi_input.c"
     "config.c"
     "network_time.c"
+    "time_setup.c"
     "wifi.c"
     "wifi_setup.c"
     "status_led.c"

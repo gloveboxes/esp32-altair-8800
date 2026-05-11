@@ -12,6 +12,10 @@ extern "C"
  * before this call or became valid through SNTP. */
 bool network_time_sync(void);
 
+/* Apply the stored timezone offset to the C library time conversion state.
+ * Safe to call before SNTP has synchronized the wall clock. */
+void network_time_apply_timezone(void);
+
 #ifdef __cplusplus
 }
 #endif

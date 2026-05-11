@@ -14,6 +14,7 @@
 #include "bt_keyboard.h"
 #include "port_drivers/chat_io.h"
 #include "port_drivers/weather_io.h"
+#include "time_setup.h"
 #include "wifi_setup.h"
 
 #include "driver/usb_serial_jtag.h"
@@ -105,6 +106,7 @@ static void config_print_boot_menu(void)
     printf("  2 - OpenAI / compatible chat endpoint\n");
     printf("  3 - WiFi credentials\n");
     printf("  4 - OpenWeatherMap\n");
+    printf("  5 - Timezone\n");
     printf("  Q - continue boot\n");
 }
 
@@ -164,6 +166,11 @@ void config_run_boot_shell(void)
             config_print_boot_menu();
             break;
 
+        case '5':
+            time_setup_run_config_shell();
+            config_print_boot_menu();
+            break;
+
         case 'Q':
             printf("Leaving boot configuration manager.\n\n");
             return;
@@ -171,7 +178,7 @@ void config_run_boot_shell(void)
         default:
             if (cmd > ' ')
             {
-                printf("Unknown command '%c'. Use 1, 2, 3, 4, or Q.\n", (char)cmd);
+                printf("Unknown command '%c'. Use 1, 2, 3, 4, 5, or Q.\n", (char)cmd);
             }
             break;
         }
@@ -278,6 +285,7 @@ bool altair_config_init(void)
 
     // Try to load existing config
     config_load();
+    time_setup_init();
 
     return true;
 }
@@ -719,6 +727,7 @@ bool altair_config_clear(void)
     s_openai_key[0] = '\0';
     s_chat_provider[0] = '\0';
     s_chat_endpoint[0] = '\0';
+    time_setup_reset_cache();
     s_config_loaded = false;
 
     printf("[Config] Configuration cleared\n");

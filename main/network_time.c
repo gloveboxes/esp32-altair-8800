@@ -1,20 +1,45 @@
 #include "network_time.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "esp_err.h"
 #include "esp_netif_sntp.h"
+#include "vt100_terminal.h"
+#include "time_setup.h"
 
 static bool s_sntp_initialized = false;
 static bool s_time_synced = false;
+static int s_timezone_offset_minutes = TIME_SETUP_OFFSET_MINUTES_MIN - 1;
+
+void network_time_apply_timezone(void)
+{
+    int offset_minutes = time_setup_get_offset_minutes();
+    if (offset_minutes == s_timezone_offset_minutes)
+    {
+        return;
+    }
+
+    int abs_minutes = offset_minutes < 0 ? -offset_minutes : offset_minutes;
+    int hours = abs_minutes / 60;
+    int minutes = abs_minutes % 60;
+    char tz[24];
+
+    /* POSIX TZ offsets use the opposite sign: UTC-10 means UTC+10 local time. */
+    snprintf(tz, sizeof(tz), "UTC%c%d:%02d", offset_minutes >= 0 ? '-' : '+', hours, minutes);
+    setenv("TZ", tz, 1);
+    tzset();
+    s_timezone_offset_minutes = offset_minutes;
+}
 
 static bool system_time_is_valid(void)
 {
     time_t now = 0;
     struct tm timeinfo;
 
+    network_time_apply_timezone();
     time(&now);
     if (now <= 0 || localtime_r(&now, &timeinfo) == NULL)
     {
@@ -28,10 +53,13 @@ static void sntp_sync_callback(struct timeval *tv)
 {
     (void)tv;
     s_time_synced = true;
+    vt100_terminal_refresh_status_time();
 }
 
 bool network_time_sync(void)
 {
+    network_time_apply_timezone();
+
     if (s_time_synced || system_time_is_valid())
     {
         s_time_synced = true;
@@ -58,6 +86,7 @@ bool network_time_sync(void)
         time_t now = 0;
         time(&now);
         s_time_synced = true;
+        vt100_terminal_refresh_status_time();
         printf("Time synchronized: %s", ctime(&now));
         return true;
     }
