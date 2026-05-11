@@ -331,23 +331,16 @@ bool websocket_console_has_clients(void)
 void websocket_console_enqueue_output(uint8_t value)
 {
     bool queued;
-    static uint32_t no_client_drops = 0;
 
     if (!s_initialized || !s_tx_queue) {
         return;
     }
 
-    // If no client connected, clear the queue to prevent accumulation
+    // No browser terminal is connected. This is a normal idle state; stale
+    // queued output is cleared by connection callbacks and the TX task.
     if (!websocket_console_has_clients()) {
-        no_client_drops++;
-        if (no_client_drops == 1 || (no_client_drops % 1024) == 0) {
-            ESP_LOGW(TAG, "Dropping WebSocket TX because no client is tracked (%lu)", (unsigned long)no_client_drops);
-        }
-        clear_tx_queue();
         return;
     }
-
-    no_client_drops = 0;
 
     // Non-blocking enqueue - drop if queue full (real-time data)
     queued = xQueueSend(s_tx_queue, &value, 0) == pdTRUE;
