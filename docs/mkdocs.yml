@@ -1,0 +1,137 @@
+site_name: Altair 8800 Emulator
+site_author: Dave Glover
+site_description: >-
+  Altair 8800 Emulator
+# site_url: https://github.com/gloveboxes/Altair-8800-Emulator
+
+# Repository ..................................................
+repo_name: Altair 8800 Emulator
+repo_url: https://github.com/gloveboxes/Altair-8800-Emulator
+
+# Copyright ...................................................
+copyright: >
+  Copyright &copy; 2023 - present Microsoft
+
+nav:
+  - Introduction: index.md
+  - Navigating the Docs: "navigating-the-docs.md"
+  - Fundamentals:
+    - Introduction: "20-fundamentals/05-Introduction.md"
+    - Deployment Options: "20-fundamentals/10-deployment-options.md"
+    - The Emulator: "20-fundamentals/23-Altair-emulator.md"
+    - Start the Web Terminal: "20-fundamentals/25-Web-Terminal.md"
+    - Learn about CP/M: "20-fundamentals/30-introduction-cpm.md"
+    - Rebooting the Emulator: "20-fundamentals/40-Rebooting-the-Altair.md"
+  - Deploy with Docker:
+    - Introduction: "40-deploy-with-docker/10-introduction.md"
+    - Install Prerequisites: "40-deploy-with-docker/15-install-prerequisites.md"
+    - Start the Emulator: "40-deploy-with-docker/17-start-container.md"
+  - Build from source:
+    - Introduction: "45-build-from-source/01-Introduction.md"
+
+    - Build from Visual Studio Code: "45-build-from-source/03-Build-from-vs-code.md"
+    - Build from Command Line:
+      - Install Prerequisites:
+        - Linux: "45-build-from-source/Install prerequisites/01-Linux-users.md"
+        - macOS: "45-build-from-source/Install prerequisites/02-macOS-users.md"
+        - Windows: "45-build-from-source/Install prerequisites/03-Windows-users.md"
+        - Raspberry Pi OS: "45-build-from-source/Install prerequisites/04-Raspberry-Pi-users.md"
+      - Build Source: "45-build-from-source/04-Compile-from-CLI.md"
+    - Start the Emulator: "45-build-from-source/05-Run-the-emulator.md"
+  - Program the Altair:
+    - Introduction: "60-programming/00-Introduction.md"
+    - Manuals: "60-programming/00-Manuals.md"
+    - Vibe Coding the Altair: "60-programming/01-Vibe-Coding.md"
+    - Editing Files: "60-programming/01-Editing-files.md"
+    - Intel 8080 IO Ports: "60-programming/01-i8080-IO-Ports.md"
+    - Microsoft BASIC: "60-programming/02-Microsoft-BASIC-programming.md"
+    - C Programming: "60-programming/03-C-programming.md"
+    - Intel 8080 Assembler: "60-programming/04-Assembly-programming.md"
+    - Altair BASIC Programming: "60-programming/05-Altair-BASIC-programming.md"
+    - Front Panel Programming: "60-programming/06-Front-panel-programming.md"
+  - Docker Images:
+      - Build Docker Images: "40-deploy-with-docker/100-Create-Docker-images.md" 
+  - Run on Azure Sphere:
+    - Introduction: "50-azsphere/01-Introduction.md"
+    - Architecture: "50-azsphere/03-architecture.md"
+    - Deploy the Altair:
+      - Deployment Options: "50-azsphere/01-Deploy-the-Altair/01-Deployment-options.md"
+      - Clone the Altair repo: "50-azsphere/01-Deploy-the-Altair/02-Clone-Altair-repo.md"
+      - Deploy Pre-built Images: "50-azsphere/01-Deploy-the-Altair/03-Deploy-prebuilt.md"
+      - Wi-Fi Configuration: "50-azsphere/01-Deploy-the-Altair/04-WiFi-configuration.md"
+      - Create a Boot SD Card: "50-azsphere/01-Deploy-the-Altair/05-Create-boot-SD-card.md"
+      - Power Management: "50-azsphere/01-Deploy-the-Altair/06-Power-management.md"
+      - Connect Altair Web Terminal: "50-azsphere/01-Deploy-the-Altair/07-Connect-Altair-web-terminal.md"
+    - Cloud services:
+      - Adding Cloud Services: "50-azsphere/Cloud-services/01-Add-cloud-services.md"
+    - Compile and Deploy:
+      - Install Developer Tools: "50-azsphere/Compile-and-deploy/01-Install-developer-tools.md"
+      - Deploy the Altair Emulator: "50-azsphere/Compile-and-deploy/02-Deploy-the-Altair-to-Azure-Sphere.md"
+    - Manage Disk Images: "50-azsphere/40-Manage-disk-images.md"
+ 
+
+plugins:
+  - search
+  - glightbox
+  - include-markdown
+  # - timetoread:
+  #     wpm: 180
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: en
+          name: English
+          default: true
+          site_name: Altair 8800 Emulator
+
+
+theme:
+  name: material
+  logo: media/favicon.ico
+  favicon: media/favicon.ico
+  features:
+    - navigation.instant
+    - navigation.footer
+    - content.code.copy
+    - navigation.tabs.sticky
+    - content.tabs.link
+
+  # Change Font: https://squidfunk.github.io/mkdocs-material/setup/changing-the-fonts/?h=fonts
+  # Google Fonts Supported By Default: https://fonts.google.com/
+  font:
+    code: Roboto Mono #Monospaced
+    text: Roboto #Regular
+  # logo: docs/media/azure-ai-studio.svg
+  palette:
+    - scheme: default # Light Mode
+      primary: black
+      accent: pink
+      toggle:
+        icon: material/brightness-2
+        name: Switch to dark mode
+    - scheme: slate # Dark Mode
+      primary: amber
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 2
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  # - pymdownx.emoji:
+  # emoji_index: !!python/name:material.extensions.emoji.twemoji
+  # emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra_css:
+  - css/custom.css
