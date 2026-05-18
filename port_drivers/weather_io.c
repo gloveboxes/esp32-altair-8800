@@ -18,6 +18,7 @@
 #include "port_drivers/weather_io.h"
 
 #include "config.h"
+#include "json_scan.h"
 #include "wifi.h"
 
 #include <stdarg.h>
@@ -27,7 +28,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "cJSON.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -40,7 +40,7 @@
 
 #define WEATHER_TAG "WEATHER_IO"
 
-#define WEATHER_REFRESH_INTERVAL_MS (15 * 60 * 1000)
+#define WEATHER_REFRESH_INTERVAL_MS (5 * 60 * 1000)
 #define WEATHER_RETRY_INTERVAL_MS   (60 * 1000)
 #define WEATHER_NETWORK_SETTLE_MS   5000
 #define WEATHER_HTTP_TIMEOUT_MS     15000
@@ -67,11 +67,13 @@ typedef struct
     char cur_main[WEATHER_STR_MAX];
     char cur_desc[WEATHER_DESC_MAX];
     char cur_temp[WEATHER_NUM_MAX];
+    char cur_feels[WEATHER_NUM_MAX];
     char cur_humid[WEATHER_NUM_MAX];
     char cur_wind[WEATHER_NUM_MAX];
     char fc_main[WEATHER_STR_MAX];
     char fc_desc[WEATHER_DESC_MAX];
     char fc_temp[WEATHER_NUM_MAX];
+    char fc_feels[WEATHER_NUM_MAX];
     char fc_when[WEATHER_WHEN_MAX];
     char units[4];      /* "C" / "F" / "K" */
     char err[WEATHER_ERR_MAX];
@@ -105,6 +107,14 @@ typedef struct
     bool truncated;
 } weather_http_ctx_t;
 
+typedef struct
+{
+    char url[WEATHER_URL_MAX];
+    char body[WEATHER_RESP_MAX];
+} weather_workspace_t;
+
+static weather_workspace_t *s_workspace = NULL;
+
 /* ---- forward decls ---- */
 static void weather_task(void *arg);
 static bool weather_fetch_once(void);
@@ -116,26 +126,7 @@ static esp_err_t weather_http_event(esp_http_client_event_t *evt);
 static bool weather_http_get(const char *url, weather_http_ctx_t *ctx);
 static bool weather_parse_current(const char *json);
 static bool weather_parse_forecast(const char *json);
-static void weather_copy_string(char *dst, size_t dst_len, const cJSON *node);
-static void weather_copy_number(char *dst, size_t dst_len, const cJSON *node);
 static void weather_capitalize(char *s);
-
-/* PSRAM-aware allocators for cJSON. cJSON pulls many small allocs;
- * routing them to PSRAM keeps internal DRAM free for SDMMC/Wi-Fi. */
-static void *weather_cjson_malloc(size_t sz)
-{
-    void *p = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p)
-    {
-        p = malloc(sz);
-    }
-    return p;
-}
-
-static void weather_cjson_free(void *p)
-{
-    free(p);
-}
 
 static int64_t weather_now_us(void)
 {
@@ -161,17 +152,30 @@ void weather_io_init(void)
         return;
     }
 
-    s_mutex = xSemaphoreCreateMutex();
-    if (!s_mutex)
+    s_workspace = heap_caps_calloc(1, sizeof(weather_workspace_t),
+                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_workspace)
     {
-        ESP_LOGE(WEATHER_TAG, "Failed to allocate weather mutex");
+        s_workspace = calloc(1, sizeof(weather_workspace_t));
+    }
+    if (!s_workspace)
+    {
+        ESP_LOGE(WEATHER_TAG, "Failed to allocate weather workspace");
         free(s_state);
         s_state = NULL;
         return;
     }
 
-    cJSON_Hooks hooks = { .malloc_fn = weather_cjson_malloc, .free_fn = weather_cjson_free };
-    cJSON_InitHooks(&hooks);
+    s_mutex = xSemaphoreCreateMutex();
+    if (!s_mutex)
+    {
+        ESP_LOGE(WEATHER_TAG, "Failed to allocate weather mutex");
+        free(s_workspace);
+        s_workspace = NULL;
+        free(s_state);
+        s_state = NULL;
+        return;
+    }
 
     weather_load_settings();
     weather_set_units_letter();
@@ -186,6 +190,8 @@ void weather_io_init(void)
         ESP_LOGE(WEATHER_TAG, "Failed to create weather task");
         vSemaphoreDelete(s_mutex);
         s_mutex = NULL;
+        free(s_workspace);
+        s_workspace = NULL;
         free(s_state);
         s_state = NULL;
         return;
@@ -352,31 +358,16 @@ static void weather_build_url(char *url, size_t url_len, const char *path, int c
 
 static bool weather_fetch_once(void)
 {
-    char *url = heap_caps_malloc(WEATHER_URL_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!url)
+    if (!s_workspace)
     {
-        url = malloc(WEATHER_URL_MAX);
-    }
-    weather_http_ctx_t ctx = {0};
-    ctx.cap = WEATHER_RESP_MAX;
-    ctx.buf = heap_caps_malloc(ctx.cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!ctx.buf)
-    {
-        ctx.buf = malloc(ctx.cap);
-    }
-
-    if (!url || !ctx.buf)
-    {
-        weather_set_error("Out of memory");
-        free(url);
-        free(ctx.buf);
-        if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE)
-        {
-            s_state->status = WEATHER_STATUS_ERROR;
-            xSemaphoreGive(s_mutex);
-        }
+        weather_set_error("Weather workspace unavailable");
         return false;
     }
+
+    char *url = s_workspace->url;
+    weather_http_ctx_t ctx = {0};
+    ctx.cap = sizeof(s_workspace->body);
+    ctx.buf = s_workspace->body;
 
     bool ok = false;
 
@@ -407,35 +398,7 @@ static bool weather_fetch_once(void)
         }
     }
 
-    free(url);
-    free(ctx.buf);
     return ok;
-}
-
-/* ---- JSON parsing ---- */
-
-static void weather_copy_string(char *dst, size_t dst_len, const cJSON *node)
-{
-    if (!node || !cJSON_IsString(node) || !node->valuestring)
-    {
-        if (dst_len > 0) dst[0] = '\0';
-        return;
-    }
-    strncpy(dst, node->valuestring, dst_len - 1);
-    dst[dst_len - 1] = '\0';
-}
-
-static void weather_copy_number(char *dst, size_t dst_len, const cJSON *node)
-{
-    if (!node || !cJSON_IsNumber(node))
-    {
-        if (dst_len > 0) dst[0] = '\0';
-        return;
-    }
-    /* Round to nearest int; keeps display compact. */
-    double v = node->valuedouble;
-    int iv = (int)(v >= 0 ? v + 0.5 : v - 0.5);
-    snprintf(dst, dst_len, "%d", iv);
 }
 
 static void weather_capitalize(char *s)
@@ -448,93 +411,113 @@ static void weather_capitalize(char *s)
 
 static bool weather_parse_current(const char *json)
 {
-    cJSON *root = cJSON_Parse(json);
-    if (!root)
+    if (!json || !strchr(json, '{'))
     {
         weather_set_error("Invalid current JSON");
         return false;
     }
+    json_scan_range_t root = { json, json + strlen(json) };
 
-    cJSON *weather_arr = cJSON_GetObjectItemCaseSensitive(root, "weather");
-    cJSON *main_obj    = cJSON_GetObjectItemCaseSensitive(root, "main");
-    cJSON *wind_obj    = cJSON_GetObjectItemCaseSensitive(root, "wind");
-    cJSON *name_obj    = cJSON_GetObjectItemCaseSensitive(root, "name");
-    cJSON *cod_obj     = cJSON_GetObjectItemCaseSensitive(root, "cod");
-
-    if (cJSON_IsNumber(cod_obj) && cod_obj->valueint != 200)
+    int cod = 0;
+    if (json_scan_get_int(root, "cod", &cod) && cod != 200)
     {
-        cJSON *msg = cJSON_GetObjectItemCaseSensitive(root, "message");
-        weather_set_error("OWM cod=%d: %s", cod_obj->valueint,
-                          (msg && cJSON_IsString(msg) && msg->valuestring) ? msg->valuestring : "");
-        cJSON_Delete(root);
+        char msg[WEATHER_ERR_MAX];
+        json_scan_get_string(root, "message", msg, sizeof(msg));
+        weather_set_error("OWM cod=%d: %s", cod, msg);
         return false;
+    }
+
+    char city[WEATHER_STR_MAX] = "";
+    char cur_main[WEATHER_STR_MAX] = "";
+    char cur_desc[WEATHER_DESC_MAX] = "";
+    char cur_temp[WEATHER_NUM_MAX] = "";
+    char cur_feels[WEATHER_NUM_MAX] = "";
+    char cur_humid[WEATHER_NUM_MAX] = "";
+    char cur_wind[WEATHER_NUM_MAX] = "";
+
+    json_scan_get_string(root, "name", city, sizeof(city));
+
+    json_scan_range_t weather_obj = {0};
+    if (json_scan_first_array_object(root, "weather", &weather_obj))
+    {
+        json_scan_get_string(weather_obj, "main", cur_main, sizeof(cur_main));
+        json_scan_get_string(weather_obj, "description", cur_desc, sizeof(cur_desc));
+        weather_capitalize(cur_desc);
+    }
+
+    json_scan_range_t main_obj = {0};
+    if (json_scan_object(root, "main", &main_obj))
+    {
+        json_scan_get_number(main_obj, "temp", cur_temp, sizeof(cur_temp));
+        json_scan_get_number(main_obj, "feels_like", cur_feels, sizeof(cur_feels));
+        json_scan_get_number(main_obj, "humidity", cur_humid, sizeof(cur_humid));
+    }
+
+    json_scan_range_t wind_obj = {0};
+    if (json_scan_object(root, "wind", &wind_obj))
+    {
+        json_scan_get_number(wind_obj, "speed", cur_wind, sizeof(cur_wind));
     }
 
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE)
     {
-        weather_copy_string(s_state->city, sizeof(s_state->city), name_obj);
-
-        if (cJSON_IsArray(weather_arr) && cJSON_GetArraySize(weather_arr) > 0)
-        {
-            cJSON *w0 = cJSON_GetArrayItem(weather_arr, 0);
-            weather_copy_string(s_state->cur_main, sizeof(s_state->cur_main),
-                                cJSON_GetObjectItemCaseSensitive(w0, "main"));
-            weather_copy_string(s_state->cur_desc, sizeof(s_state->cur_desc),
-                                cJSON_GetObjectItemCaseSensitive(w0, "description"));
-            weather_capitalize(s_state->cur_desc);
-        }
-
-        weather_copy_number(s_state->cur_temp, sizeof(s_state->cur_temp),
-                            cJSON_GetObjectItemCaseSensitive(main_obj, "temp"));
-        weather_copy_number(s_state->cur_humid, sizeof(s_state->cur_humid),
-                            cJSON_GetObjectItemCaseSensitive(main_obj, "humidity"));
-        weather_copy_number(s_state->cur_wind, sizeof(s_state->cur_wind),
-                            cJSON_GetObjectItemCaseSensitive(wind_obj, "speed"));
+        strncpy(s_state->city, city, sizeof(s_state->city));
+        strncpy(s_state->cur_main, cur_main, sizeof(s_state->cur_main));
+        strncpy(s_state->cur_desc, cur_desc, sizeof(s_state->cur_desc));
+        strncpy(s_state->cur_temp, cur_temp, sizeof(s_state->cur_temp));
+        strncpy(s_state->cur_feels, cur_feels, sizeof(s_state->cur_feels));
+        strncpy(s_state->cur_humid, cur_humid, sizeof(s_state->cur_humid));
+        strncpy(s_state->cur_wind, cur_wind, sizeof(s_state->cur_wind));
         xSemaphoreGive(s_mutex);
     }
-
-    cJSON_Delete(root);
     return true;
 }
 
 static bool weather_parse_forecast(const char *json)
 {
-    cJSON *root = cJSON_Parse(json);
-    if (!root)
+    if (!json || !strchr(json, '{'))
+    {
+        return false;
+    }
+    json_scan_range_t root = { json, json + strlen(json) };
+
+    json_scan_range_t item = {0};
+    if (!json_scan_first_array_object(root, "list", &item))
     {
         return false;
     }
 
-    cJSON *list = cJSON_GetObjectItemCaseSensitive(root, "list");
-    if (!cJSON_IsArray(list) || cJSON_GetArraySize(list) < 1)
+    char fc_main[WEATHER_STR_MAX] = "";
+    char fc_desc[WEATHER_DESC_MAX] = "";
+    char fc_temp[WEATHER_NUM_MAX] = "";
+    char fc_feels[WEATHER_NUM_MAX] = "";
+    char fc_when[WEATHER_WHEN_MAX] = "";
+
+    json_scan_range_t weather_obj = {0};
+    if (json_scan_first_array_object(item, "weather", &weather_obj))
     {
-        cJSON_Delete(root);
-        return false;
+        json_scan_get_string(weather_obj, "main", fc_main, sizeof(fc_main));
+        json_scan_get_string(weather_obj, "description", fc_desc, sizeof(fc_desc));
+        weather_capitalize(fc_desc);
     }
 
-    cJSON *item = cJSON_GetArrayItem(list, 0);
-    cJSON *weather_arr = cJSON_GetObjectItemCaseSensitive(item, "weather");
-    cJSON *main_obj    = cJSON_GetObjectItemCaseSensitive(item, "main");
-    cJSON *dt_txt      = cJSON_GetObjectItemCaseSensitive(item, "dt_txt");
+    json_scan_range_t main_obj = {0};
+    if (json_scan_object(item, "main", &main_obj))
+    {
+        json_scan_get_number(main_obj, "temp", fc_temp, sizeof(fc_temp));
+        json_scan_get_number(main_obj, "feels_like", fc_feels, sizeof(fc_feels));
+    }
+    json_scan_get_string(item, "dt_txt", fc_when, sizeof(fc_when));
 
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE)
     {
-        if (cJSON_IsArray(weather_arr) && cJSON_GetArraySize(weather_arr) > 0)
-        {
-            cJSON *w0 = cJSON_GetArrayItem(weather_arr, 0);
-            weather_copy_string(s_state->fc_main, sizeof(s_state->fc_main),
-                                cJSON_GetObjectItemCaseSensitive(w0, "main"));
-            weather_copy_string(s_state->fc_desc, sizeof(s_state->fc_desc),
-                                cJSON_GetObjectItemCaseSensitive(w0, "description"));
-            weather_capitalize(s_state->fc_desc);
-        }
-        weather_copy_number(s_state->fc_temp, sizeof(s_state->fc_temp),
-                            cJSON_GetObjectItemCaseSensitive(main_obj, "temp"));
-        weather_copy_string(s_state->fc_when, sizeof(s_state->fc_when), dt_txt);
+        strncpy(s_state->fc_main, fc_main, sizeof(s_state->fc_main));
+        strncpy(s_state->fc_desc, fc_desc, sizeof(s_state->fc_desc));
+        strncpy(s_state->fc_temp, fc_temp, sizeof(s_state->fc_temp));
+        strncpy(s_state->fc_feels, fc_feels, sizeof(s_state->fc_feels));
+        strncpy(s_state->fc_when, fc_when, sizeof(s_state->fc_when));
         xSemaphoreGive(s_mutex);
     }
-
-    cJSON_Delete(root);
     return true;
 }
 
@@ -546,11 +529,13 @@ static void weather_clear_data_locked(void)
     s_state->cur_main[0] = '\0';
     s_state->cur_desc[0] = '\0';
     s_state->cur_temp[0] = '\0';
+    s_state->cur_feels[0] = '\0';
     s_state->cur_humid[0] = '\0';
     s_state->cur_wind[0] = '\0';
     s_state->fc_main[0] = '\0';
     s_state->fc_desc[0] = '\0';
     s_state->fc_temp[0] = '\0';
+    s_state->fc_feels[0] = '\0';
     s_state->fc_when[0] = '\0';
 }
 
@@ -827,11 +812,13 @@ static const char *weather_field_locked(uint8_t field, char *scratch, size_t scr
         case WEATHER_FIELD_CUR_MAIN:  return s_state->cur_main;
         case WEATHER_FIELD_CUR_DESC:  return s_state->cur_desc;
         case WEATHER_FIELD_CUR_TEMP:  return s_state->cur_temp;
+        case WEATHER_FIELD_CUR_FEELS: return s_state->cur_feels;
         case WEATHER_FIELD_CUR_HUMID: return s_state->cur_humid;
         case WEATHER_FIELD_CUR_WIND:  return s_state->cur_wind;
         case WEATHER_FIELD_FC_MAIN:   return s_state->fc_main;
         case WEATHER_FIELD_FC_DESC:   return s_state->fc_desc;
         case WEATHER_FIELD_FC_TEMP:   return s_state->fc_temp;
+        case WEATHER_FIELD_FC_FEELS:  return s_state->fc_feels;
         case WEATHER_FIELD_FC_WHEN:   return s_state->fc_when;
         case WEATHER_FIELD_UNITS:     return s_state->units;
         case WEATHER_FIELD_ERROR:     return s_state->err;

@@ -30,9 +30,15 @@
 #define CHAT_DEFAULT_OPENAI_ENDPOINT "https://api.openai.com/v1/chat/completions"
 #define CHAT_PROVIDER_OPENAI "openai"
 #define CHAT_PROVIDER_COMPATIBLE "compatible"
+#define CHAT_DEFAULT_MODEL "gemma3:1b"
+#define CHAT_DEFAULT_MAX_TOKENS "1024"
+#define CHAT_DEFAULT_TEMPERATURE "0.7"
 
 #define CHAT_API_KEY_MAX 192
 #define CHAT_ENDPOINT_MAX CONFIG_CHAT_ENDPOINT_MAX_LEN
+#define CHAT_MODEL_MAX CONFIG_CHAT_MODEL_MAX_LEN
+#define CHAT_MAX_TOKENS_MAX CONFIG_CHAT_MAX_TOKENS_MAX_LEN
+#define CHAT_TEMPERATURE_MAX CONFIG_CHAT_TEMPERATURE_MAX_LEN
 #define CHAT_HOST_MAX 96
 #define CHAT_PATH_MAX 96
 #define CHAT_REQUEST_MAX 8192
@@ -143,6 +149,9 @@ static QueueHandle_t s_chat_response_queue = NULL;
 static char s_chat_api_key[CHAT_API_KEY_MAX];
 static char s_chat_provider[CONFIG_CHAT_PROVIDER_MAX_LEN + 1];
 static char s_chat_endpoint[CHAT_ENDPOINT_MAX + 1];
+static char s_chat_model[CHAT_MODEL_MAX + 1];
+static char s_chat_max_tokens[CHAT_MAX_TOKENS_MAX + 1];
+static char s_chat_temperature[CHAT_TEMPERATURE_MAX + 1];
 static bool s_network_available = false;
 static bool s_initialized = false;
 
@@ -172,7 +181,11 @@ static void chat_queue_text(uint32_t generation, const char *text);
 static void chat_queue_eof(chat_parse_t *parser, uint32_t generation);
 static void chat_process_request(chat_request_t *request);
 static void chat_load_settings(void);
+static bool chat_valid_uint_text(const char *text);
+static bool chat_valid_temperature_text(const char *text);
 static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed);
+static bool chat_starts_with_ci(const char *text, const char *prefix);
+static bool chat_str_eq_ci(const char *left, const char *right);
 static bool chat_send_all(esp_tls_t *tls, const uint8_t *data, size_t len);
 static bool chat_read_response(esp_tls_t *tls, chat_workspace_t *ws);
 static void chat_log_tls_error(esp_tls_t *tls, int ret);
@@ -242,15 +255,36 @@ static void chat_load_settings(void)
     s_chat_provider[0] = '\0';
     s_chat_endpoint[0] = '\0';
     s_chat_api_key[0] = '\0';
+    s_chat_model[0] = '\0';
+    s_chat_max_tokens[0] = '\0';
+    s_chat_temperature[0] = '\0';
 
     config_load_chat_settings(s_chat_provider, sizeof(s_chat_provider),
                               s_chat_endpoint, sizeof(s_chat_endpoint),
                               s_chat_api_key, sizeof(s_chat_api_key));
+    config_load_chat_options(s_chat_model, sizeof(s_chat_model),
+                             s_chat_max_tokens, sizeof(s_chat_max_tokens),
+                             s_chat_temperature, sizeof(s_chat_temperature));
 
     if (strcmp(s_chat_provider, CHAT_PROVIDER_COMPATIBLE) != 0)
     {
         strncpy(s_chat_provider, CHAT_PROVIDER_OPENAI, sizeof(s_chat_provider) - 1);
         s_chat_provider[sizeof(s_chat_provider) - 1] = '\0';
+    }
+    if (s_chat_model[0] == '\0')
+    {
+        strncpy(s_chat_model, CHAT_DEFAULT_MODEL, sizeof(s_chat_model) - 1);
+        s_chat_model[sizeof(s_chat_model) - 1] = '\0';
+    }
+    if (s_chat_max_tokens[0] == '\0')
+    {
+        strncpy(s_chat_max_tokens, CHAT_DEFAULT_MAX_TOKENS, sizeof(s_chat_max_tokens) - 1);
+        s_chat_max_tokens[sizeof(s_chat_max_tokens) - 1] = '\0';
+    }
+    if (s_chat_temperature[0] == '\0')
+    {
+        strncpy(s_chat_temperature, CHAT_DEFAULT_TEMPERATURE, sizeof(s_chat_temperature) - 1);
+        s_chat_temperature[sizeof(s_chat_temperature) - 1] = '\0';
     }
 }
 
@@ -289,6 +323,9 @@ static void chat_print_menu(void)
     printf("\nChat provider manager\n");
     printf("  1 - configure OpenAI\n");
     printf("  2 - configure OpenAI Compatible endpoint\n");
+    printf("  3 - configure model\n");
+    printf("  4 - configure max tokens\n");
+    printf("  5 - configure temperature\n");
     printf("  S - show current settings\n");
     printf("  Q - return to main config menu\n");
 }
@@ -349,8 +386,46 @@ static void chat_print_settings(void)
     printf("  Provider: %s\n", chat_provider_is_compatible() ? "OpenAI Compatible" : "OpenAI");
     printf("  Endpoint: %s\n", chat_provider_is_compatible() ?
            (s_chat_endpoint[0] ? s_chat_endpoint : "(not set)") : CHAT_DEFAULT_OPENAI_ENDPOINT);
-    printf("  Model: from CHAT.C/chat.cfg request\n");
+    printf("  Model: %s\n", s_chat_model);
+    printf("  Max tokens: %s\n", s_chat_max_tokens);
+    printf("  Temperature: %s\n", s_chat_temperature);
     printf("  API key: %s\n", s_chat_api_key[0] ? "set" : "not set");
+}
+
+static bool chat_valid_uint_text(const char *text)
+{
+    if (!text || text[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = text; *p; p++)
+    {
+        if (*p < '0' || *p > '9')
+        {
+            return false;
+        }
+    }
+
+    return atoi(text) > 0;
+}
+
+static bool chat_valid_temperature_text(const char *text)
+{
+    char *end = NULL;
+
+    if (!text || text[0] == '\0')
+    {
+        return false;
+    }
+
+    double value = strtod(text, &end);
+    if (end == text || *end != '\0')
+    {
+        return false;
+    }
+
+    return value >= 0.0 && value <= 2.0;
 }
 
 static void chat_configure_openai(void)
@@ -423,8 +498,6 @@ static void chat_configure_compatible(void)
     }
     printf("Endpoint: %s\n", endpoint);
 
-    printf("Model and temperature are read from the CHAT.C request JSON (CHAT.CFG).\n");
-
     if (editing_compatible && s_chat_api_key[0])
     {
         printf("API key is optional. Press Enter to keep it, '-' to clear, or paste a replacement.\n");
@@ -448,6 +521,94 @@ static void chat_configure_compatible(void)
     }
 
     if (config_save_chat_settings(CHAT_PROVIDER_COMPATIBLE, endpoint, key))
+    {
+        chat_load_settings();
+    }
+}
+
+static void chat_configure_model(void)
+{
+    char model[CHAT_MODEL_MAX + 1];
+
+    printf("\nConfigure chat model\n");
+    printf("Current model: %s\n", s_chat_model);
+    printf("Press Enter to keep it, '-' to restore default, or type a replacement.\n");
+    if (!chat_serial_read_line("model> ", model, sizeof(model), false))
+    {
+        return;
+    }
+    if (model[0] == '\0')
+    {
+        return;
+    }
+    if (strcmp(model, "-") == 0)
+    {
+        strncpy(model, CHAT_DEFAULT_MODEL, sizeof(model) - 1);
+        model[sizeof(model) - 1] = '\0';
+    }
+    if (config_save_chat_options(model, s_chat_max_tokens, s_chat_temperature))
+    {
+        chat_load_settings();
+    }
+}
+
+static void chat_configure_max_tokens(void)
+{
+    char max_tokens[CHAT_MAX_TOKENS_MAX + 1];
+
+    printf("\nConfigure chat max tokens\n");
+    printf("Current max tokens: %s\n", s_chat_max_tokens);
+    printf("Press Enter to keep it, '-' to restore default, or type a replacement.\n");
+    if (!chat_serial_read_line("max tokens> ", max_tokens, sizeof(max_tokens), false))
+    {
+        return;
+    }
+    if (max_tokens[0] == '\0')
+    {
+        return;
+    }
+    if (strcmp(max_tokens, "-") == 0)
+    {
+        strncpy(max_tokens, CHAT_DEFAULT_MAX_TOKENS, sizeof(max_tokens) - 1);
+        max_tokens[sizeof(max_tokens) - 1] = '\0';
+    }
+    if (!chat_valid_uint_text(max_tokens))
+    {
+        printf("Max tokens must be a positive integer.\n");
+        return;
+    }
+    if (config_save_chat_options(s_chat_model, max_tokens, s_chat_temperature))
+    {
+        chat_load_settings();
+    }
+}
+
+static void chat_configure_temperature(void)
+{
+    char temperature[CHAT_TEMPERATURE_MAX + 1];
+
+    printf("\nConfigure chat temperature\n");
+    printf("Current temperature: %s\n", s_chat_temperature);
+    printf("Press Enter to keep it, '-' to restore default, or type a replacement.\n");
+    if (!chat_serial_read_line("temperature> ", temperature, sizeof(temperature), false))
+    {
+        return;
+    }
+    if (temperature[0] == '\0')
+    {
+        return;
+    }
+    if (strcmp(temperature, "-") == 0)
+    {
+        strncpy(temperature, CHAT_DEFAULT_TEMPERATURE, sizeof(temperature) - 1);
+        temperature[sizeof(temperature) - 1] = '\0';
+    }
+    if (!chat_valid_temperature_text(temperature))
+    {
+        printf("Temperature must be a number from 0.0 to 2.0.\n");
+        return;
+    }
+    if (config_save_chat_options(s_chat_model, s_chat_max_tokens, temperature))
     {
         chat_load_settings();
     }
@@ -558,6 +719,21 @@ void chat_io_run_config_shell(void)
             chat_print_menu();
             break;
 
+        case '3':
+            chat_configure_model();
+            chat_print_menu();
+            break;
+
+        case '4':
+            chat_configure_max_tokens();
+            chat_print_menu();
+            break;
+
+        case '5':
+            chat_configure_temperature();
+            chat_print_menu();
+            break;
+
         case 'S':
             chat_print_settings();
             chat_print_menu();
@@ -570,7 +746,7 @@ void chat_io_run_config_shell(void)
         default:
             if (cmd > ' ')
             {
-                printf("Unknown command '%c'. Use 1, 2, S, or Q.\n", (char)cmd);
+                printf("Unknown command '%c'. Use 1, 2, 3, 4, 5, S, or Q.\n", (char)cmd);
             }
             break;
         }
@@ -789,16 +965,48 @@ static void chat_client_task(void *arg)
     }
 }
 
-static bool chat_starts_with(const char *text, const char *prefix)
+static bool chat_starts_with_ci(const char *text, const char *prefix)
 {
     while (*prefix)
     {
-        if (*text++ != *prefix++)
+        char a = *text++;
+        char b = *prefix++;
+        if (a >= 'A' && a <= 'Z')
+        {
+            a = (char)(a - 'A' + 'a');
+        }
+        if (b >= 'A' && b <= 'Z')
+        {
+            b = (char)(b - 'A' + 'a');
+        }
+        if (a != b)
         {
             return false;
         }
     }
     return true;
+}
+
+static bool chat_str_eq_ci(const char *left, const char *right)
+{
+    while (*left && *right)
+    {
+        char a = *left++;
+        char b = *right++;
+        if (a >= 'A' && a <= 'Z')
+        {
+            a = (char)(a - 'A' + 'a');
+        }
+        if (b >= 'A' && b <= 'Z')
+        {
+            b = (char)(b - 'A' + 'a');
+        }
+        if (a != b)
+        {
+            return false;
+        }
+    }
+    return *left == '\0' && *right == '\0';
 }
 
 static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed)
@@ -819,13 +1027,13 @@ static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed)
 
     memset(parsed, 0, sizeof(*parsed));
 
-    if (chat_starts_with(endpoint, "https://"))
+    if (chat_starts_with_ci(endpoint, "https://"))
     {
         parsed->https = true;
         parsed->port = 443;
         cursor = endpoint + 8;
     }
-    else if (chat_starts_with(endpoint, "http://"))
+    else if (chat_starts_with_ci(endpoint, "http://"))
     {
         parsed->https = false;
         parsed->port = 80;
@@ -880,6 +1088,11 @@ static bool chat_parse_endpoint(const char *endpoint, chat_endpoint_t *parsed)
     parsed->host_header[host_header_len] = '\0';
 
     if (!path_start || path_start[0] == '\0' || strcmp(path_start, "/") == 0)
+    {
+        strncpy(parsed->path, CHAT_PATH, sizeof(parsed->path) - 1);
+        parsed->path[sizeof(parsed->path) - 1] = '\0';
+    }
+    else if (chat_str_eq_ci(path_start, CHAT_PATH))
     {
         strncpy(parsed->path, CHAT_PATH, sizeof(parsed->path) - 1);
         parsed->path[sizeof(parsed->path) - 1] = '\0';

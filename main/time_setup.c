@@ -17,8 +17,8 @@
 #include "freertos/task.h"
 #include "nvs.h"
 
-#define TIME_SETUP_NVS_NAMESPACE "altair_cfg"
-#define TIME_SETUP_NVS_KEY_OFFSET "tz_offset"
+#define TIME_SETUP_NVS_NAMESPACE "ENVIRONMENT"
+#define TIME_SETUP_NVS_KEY_OFFSET "UTC_OFFSET"
 
 static int s_offset_minutes = 0;
 static bool s_loaded = false;
@@ -113,108 +113,100 @@ static bool time_setup_read_line(const char *prompt, char *buffer, size_t buffer
     }
 }
 
+static void time_setup_trim_float(char *buffer)
+{
+    char *dot;
+    char *end;
+
+    dot = strchr(buffer, '.');
+    if (!dot)
+    {
+        return;
+    }
+
+    end = buffer + strlen(buffer) - 1;
+    while (end > dot + 1 && *end == '0')
+    {
+        *end = '\0';
+        end--;
+    }
+}
+
 static void time_setup_format_offset(int offset_minutes, char *buffer, size_t buffer_len)
 {
-    int abs_minutes = offset_minutes < 0 ? -offset_minutes : offset_minutes;
-    int hours = abs_minutes / 60;
-    int minutes = abs_minutes % 60;
+    double offset_hours = (double)offset_minutes / 60.0;
 
-    snprintf(buffer, buffer_len, "UTC%c%d:%02d",
-             offset_minutes >= 0 ? '+' : '-', hours, minutes);
+    snprintf(buffer, buffer_len, "%.2f", offset_hours);
+    time_setup_trim_float(buffer);
 }
 
 static bool time_setup_parse_offset(const char *text, int *offset_minutes)
 {
+    const char *p;
+    char *end = NULL;
+    double offset_hours;
+    double offset_total;
+
     if (!text || !offset_minutes)
     {
         return false;
     }
 
-    while (*text == ' ' || *text == '\t')
+    p = text;
+    while (*p == ' ' || *p == '\t')
     {
-        text++;
+        p++;
     }
-    if ((text[0] == 'U' || text[0] == 'u') &&
-        (text[1] == 'T' || text[1] == 't') &&
-        (text[2] == 'C' || text[2] == 'c'))
+
+    if (*p == '+' || *p == '-')
     {
-        text += 3;
+        p++;
     }
-    if (*text == '\0')
+
+    if ((*p < '0' || *p > '9') && *p != '.')
     {
         return false;
     }
 
-    int sign = 1;
-    if (*text == '+' || *text == '-')
+    while (*p >= '0' && *p <= '9')
     {
-        sign = (*text == '-') ? -1 : 1;
-        text++;
+        p++;
     }
 
-    char *end = NULL;
-    long hours = strtol(text, &end, 10);
+    if (*p == '.')
+    {
+        p++;
+        if (*p < '0' || *p > '9')
+        {
+            return false;
+        }
+        while (*p >= '0' && *p <= '9')
+        {
+            p++;
+        }
+    }
+
+    while (*p == ' ' || *p == '\t')
+    {
+        p++;
+    }
+    if (*p != '\0')
+    {
+        return false;
+    }
+
+    offset_hours = strtod(text, &end);
     if (end == text)
     {
         return false;
     }
-
-    long abs_hours = hours;
-    if (abs_hours < 0)
-    {
-        sign = -1;
-        abs_hours = -abs_hours;
-    }
-    long minutes = 0;
-
-    if (*end == ':')
-    {
-        const char *minute_text = end + 1;
-        minutes = strtol(minute_text, &end, 10);
-        if (end == minute_text || minutes < 0 || minutes > 59)
-        {
-            return false;
-        }
-    }
-    else if (*end == '.')
-    {
-        const char *fraction_text = end + 1;
-        long fraction = strtol(fraction_text, &end, 10);
-        if (end == fraction_text || fraction < 0)
-        {
-            return false;
-        }
-
-        long divisor = 1;
-        for (const char *p = fraction_text; p < end; p++)
-        {
-            divisor *= 10;
-        }
-        minutes = (fraction * 60 + divisor / 2) / divisor;
-        if (minutes >= 60)
-        {
-            abs_hours++;
-            minutes -= 60;
-        }
-    }
-
-    while (*end == ' ' || *end == '\t')
-    {
-        end++;
-    }
-    if (*end != '\0')
+    if (offset_hours < -14.0 || offset_hours > 14.0)
     {
         return false;
     }
 
-    long total = sign * (abs_hours * 60 + minutes);
-    if (total < TIME_SETUP_OFFSET_MINUTES_MIN ||
-        total > TIME_SETUP_OFFSET_MINUTES_MAX)
-    {
-        return false;
-    }
-
-    *offset_minutes = (int)total;
+    offset_total = offset_hours * 60.0;
+    *offset_minutes = (int)(offset_total >= 0 ? offset_total + 0.5 : offset_total - 0.5);
     return true;
 }
 
@@ -237,7 +229,7 @@ static void time_setup_configure(void)
     time_setup_format_offset(offset_minutes, current, sizeof(current));
     printf("\nConfigure timezone\n");
     printf("Current offset: %s\n", current);
-    printf("Enter a fixed UTC offset, e.g. 10, 11, -5, 5:30, or 9.5.\n");
+    printf("Enter UTC offset as decimal hours, e.g. 10.0, 8.5, or -8.5.\n");
     printf("Press Enter to keep the current value.\n");
 
     if (!time_setup_read_line("UTC offset: ", input, sizeof(input)))
@@ -251,7 +243,7 @@ static void time_setup_configure(void)
 
     if (!time_setup_parse_offset(input, &offset_minutes))
     {
-        printf("Invalid timezone offset. Use a value from -14:00 to +14:00.\n");
+        printf("Invalid timezone offset. Use a decimal value from -14.0 to 14.0.\n");
         return;
     }
 
@@ -281,12 +273,14 @@ void time_setup_init(void)
         return;
     }
 
-    int32_t offset_minutes = 0;
-    err = nvs_get_i32(handle, TIME_SETUP_NVS_KEY_OFFSET, &offset_minutes);
+    char offset_text[16] = {0};
+    size_t len = sizeof(offset_text);
+    err = nvs_get_str(handle, TIME_SETUP_NVS_KEY_OFFSET, offset_text, &len);
     nvs_close(handle);
+
+    int offset_minutes = 0;
     if (err == ESP_OK &&
-        offset_minutes >= TIME_SETUP_OFFSET_MINUTES_MIN &&
-        offset_minutes <= TIME_SETUP_OFFSET_MINUTES_MAX)
+        time_setup_parse_offset(offset_text, &offset_minutes))
     {
         s_offset_minutes = (int)offset_minutes;
     }
@@ -330,7 +324,10 @@ bool time_setup_save_offset_minutes(int offset_minutes)
         return false;
     }
 
-    err = nvs_set_i32(handle, TIME_SETUP_NVS_KEY_OFFSET, (int32_t)offset_minutes);
+    char offset_text[16];
+    time_setup_format_offset(offset_minutes, offset_text, sizeof(offset_text));
+
+    err = nvs_set_str(handle, TIME_SETUP_NVS_KEY_OFFSET, offset_text);
     if (err == ESP_OK)
     {
         err = nvs_commit(handle);

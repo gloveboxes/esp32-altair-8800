@@ -13,6 +13,7 @@ set(app_sources
     "websocket_server.c"
     "../captive_portal/captive_portal.c"
     "../port_drivers/io_ports.c"
+    "../port_drivers/json_scan.c"
     "../port_drivers/chat_io.c"
     "../port_drivers/environment_io.c"
     "../port_drivers/files_io.c"
@@ -67,8 +68,7 @@ idf_component_register(SRCS ${app_sources}
                                 esp_event
                                 esp-tls
                                 mbedtls
-                                lwip
-                                cjson)
+                                lwip)
 
 # Enable stricter warnings for app code only
 target_compile_options(${COMPONENT_LIB} PRIVATE

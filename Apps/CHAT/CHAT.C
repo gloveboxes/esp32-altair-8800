@@ -21,7 +21,8 @@
 #define REQ_LEN 8192
 #define CLINE 80
 #define CFG_VAL 16
-#define CMLEN 32
+#define CMLEN 64
+#define EVLEN 128
 
 /* OpenAI status codes */
 #define OEOF 0
@@ -76,10 +77,12 @@ int ch_fus();
 int ch_gas();
 int ch_fas();
 int ch_lcfg();
+int ch_lenv();
 int ch_cfg();
 int ch_stok();
 int ch_stmp();
 int ch_smdl();
+int ch_hlp();
 
 /* String functions */
 int strlen();
@@ -90,10 +93,24 @@ int strcmp();
 /* I/O port functions */
 int outp();
 int inp();
+int e_init();
+int e_get();
+int e_set();
 
-main()
+main(argc, argv)
+int argc;
+char *argv[];
 {
     int choice;
+
+    if (argc > 1)
+    {
+        if (strcmp(argv[1], "-H") == 0 || strcmp(argv[1], "-h") == 0 ||
+            strcmp(argv[1], "/?") == 0)
+        {
+            return ch_hlp();
+        }
+    }
 
     x_clrsc();
 
@@ -153,9 +170,9 @@ int ch_init()
 
     /* Clear system message */
     g_sys[0] = 0;
-    strcpy(g_mtok, "512");
-    strcpy(g_tempv, "0.2");
-    strcpy(g_model, "gpt-4o-mini");
+    strcpy(g_mtok, "1024");
+    strcpy(g_tempv, "0.7");
+    strcpy(g_model, "gemma3:1b");
 
     /* Clear message arrays */
     g_mcnt = 0;
@@ -207,8 +224,58 @@ int ch_load()
 
     fclose(fp);
 
-    /* Load optional config (uses defaults if missing) */
+    /* Load optional file config, then ENV overrides if present. */
     ch_lcfg();
+    ch_lenv();
+
+    return 0;
+}
+
+/* Show command-line help */
+int ch_hlp()
+{
+    printf("CHAT - OpenAI / compatible chat client\r\n\r\n");
+    printf("Usage: CHAT [-H]\r\n\r\n");
+    printf("Setup may be done from the startup config menu\r\n");
+    printf("with a serial terminal connected, or from CP/M\r\n");
+    printf("using ESP32 ENV variables.\r\n\r\n");
+    printf("OpenAI-compatible example:\r\n");
+    printf("  ENV CHAT_PROVIDER=compatible\r\n");
+    printf("  ENV CHAT_ENDPOINT=http://host:11434/v1/chat/completions\r\n");
+    printf("  ENV CHAT_MODEL=gemma3:1b\r\n");
+    printf("  ENV CHAT_MAX_TOKENS=1024\r\n");
+    printf("  ENV CHAT_TEMPERATURE=0.7\r\n\r\n");
+    printf("OpenAI example:\r\n");
+    printf("  ENV CHAT_PROVIDER=openai\r\n");
+    printf("  ENV OPENAI_KEY=your-api-key\r\n");
+    printf("  ENV CHAT_MODEL=gpt-4o-mini\r\n\r\n");
+    printf("CHAT.CFG is used as a fallback for model, max_tokens,\r\n");
+    printf("and temperature. Missing ENV values are seeded on run.\r\n");
+    return 0;
+}
+
+/* Load chat options from ESP32 ENV variables */
+int ch_lenv()
+{
+    char val[EVLEN];
+
+    if (e_init() != 0)
+        return 0;
+
+    if (e_get("CHAT_MODEL", val) == 0 && val[0])
+        ch_smdl(val);
+    else
+        e_set("CHAT_MODEL", g_model);
+
+    if (e_get("CHAT_MAX_TOKENS", val) == 0 && val[0])
+        ch_stok(val);
+    else
+        e_set("CHAT_MAX_TOKENS", g_mtok);
+
+    if (e_get("CHAT_TEMPERATURE", val) == 0 && val[0])
+        ch_stmp(val);
+    else
+        e_set("CHAT_TEMPERATURE", g_tempv);
 
     return 0;
 }
@@ -487,7 +554,7 @@ int ch_chat()
     x_clrsc();
     printf("=== Chat Session ===\n");
     printf("Type 'quit' to exit, 'clear' to clear screen\n\n");
-    printf("Config (chat.cfg)\n");
+    printf("Config (ENV, chat.cfg fallback)\n");
     printf("- Model: %s\n", g_model);
     printf("- Temperature: %s\n", g_tempv);
     printf("- Max Tokens: %s\n\n", g_mtok);

@@ -35,6 +35,8 @@
 #define BT_KEYBOARD_TASK_PRIORITY 4
 #define BT_KEYBOARD_TASK_CORE 0
 #define BT_KEYBOARD_OPEN_TIMEOUT_US (15LL * 1000LL * 1000LL)
+#define BT_KEYBOARD_RECONNECT_SCAN_MIN_US (30LL * 1000LL * 1000LL)
+#define BT_KEYBOARD_RECONNECT_SCAN_MAX_US (60LL * 1000LL * 1000LL)
 
 static const char *TAG = "BT_Keyboard";
 
@@ -50,11 +52,50 @@ static volatile bool s_disconnect_requested = false;
 static volatile bool s_clear_bonds_requested = false;
 static volatile bool s_pending_open = false;
 static volatile bool s_connected_reported = false;
+static volatile bool s_reset_reconnect_backoff_requested = false;
 static int64_t s_open_started_us = 0;
 static esp_bd_addr_t s_pending_bda;
 static esp_ble_addr_type_t s_pending_addr_type;
 static esp_hidh_dev_t *s_dev = NULL;
 static uint8_t s_last_keys[6];
+static int64_t s_next_reconnect_scan_us = 0;
+static int64_t s_reconnect_scan_interval_us = BT_KEYBOARD_RECONNECT_SCAN_MIN_US;
+
+static void reset_reconnect_scan_backoff(void)
+{
+    s_next_reconnect_scan_us = 0;
+    s_reconnect_scan_interval_us = BT_KEYBOARD_RECONNECT_SCAN_MIN_US;
+}
+
+static void request_reconnect_scan_backoff_reset(void)
+{
+    s_reset_reconnect_backoff_requested = true;
+}
+
+static bool reconnect_scan_due(void)
+{
+    int64_t now = esp_timer_get_time();
+    return s_next_reconnect_scan_us == 0 || now >= s_next_reconnect_scan_us;
+}
+
+static void reconnect_scan_started(void)
+{
+    int64_t now = esp_timer_get_time();
+    s_next_reconnect_scan_us = now + s_reconnect_scan_interval_us;
+    if (s_reconnect_scan_interval_us < BT_KEYBOARD_RECONNECT_SCAN_MAX_US) {
+        s_reconnect_scan_interval_us *= 2;
+        if (s_reconnect_scan_interval_us > BT_KEYBOARD_RECONNECT_SCAN_MAX_US) {
+            s_reconnect_scan_interval_us = BT_KEYBOARD_RECONNECT_SCAN_MAX_US;
+        }
+    }
+}
+
+static void bt_keyboard_quiet_stack_logs(void)
+{
+    esp_log_level_set("BT_HCI", ESP_LOG_ERROR);
+    esp_log_level_set("BT_APPL", ESP_LOG_ERROR);
+    esp_log_level_set("BLE_HIDH", ESP_LOG_NONE);
+}
 
 static void report_keyboard_connected(esp_hidh_dev_t *dev)
 {
@@ -75,7 +116,7 @@ static void open_pending_keyboard(void)
 
     esp_hidh_dev_t *dev = esp_hidh_dev_open(s_pending_bda, ESP_HID_TRANSPORT_BLE, s_pending_addr_type);
     if (dev == NULL) {
-        ESP_LOGW(TAG, "BLE keyboard open did not complete for this advertisement; retrying scan");
+        ESP_LOGD(TAG, "BLE keyboard open did not complete for this advertisement; retrying scan");
         s_opening = false;
         s_open_started_us = 0;
         return;
@@ -320,7 +361,7 @@ static void bt_keyboard_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_c
             s_pending_addr_type = param->scan_rst.ble_addr_type;
             s_pending_open = true;
             s_scan_active = false;
-            ESP_LOGI(TAG, "Opening BLE HID keyboard %02x:%02x:%02x:%02x:%02x:%02x%s%s%s",
+            ESP_LOGD(TAG, "Opening BLE HID keyboard %02x:%02x:%02x:%02x:%02x:%02x%s%s%s",
                      param->scan_rst.bda[0], param->scan_rst.bda[1], param->scan_rst.bda[2],
                      param->scan_rst.bda[3], param->scan_rst.bda[4], param->scan_rst.bda[5],
                      name[0] ? " name='" : "", name[0] ? name : "", name[0] ? "'" : "");
@@ -381,6 +422,7 @@ static void bt_keyboard_hidh_callback(void *handler_args, esp_event_base_t base,
                 s_open_started_us = 0;
                 s_pairing_requested = false;
                 s_dev = param->open.dev;
+                request_reconnect_scan_backoff_reset();
                 memset(s_last_keys, 0, sizeof(s_last_keys));
                 report_keyboard_connected(param->open.dev);
             } else {
@@ -388,7 +430,7 @@ static void bt_keyboard_hidh_callback(void *handler_args, esp_event_base_t base,
                 s_connected_reported = false;
                 s_opening = false;
                 s_open_started_us = 0;
-                ESP_LOGW(TAG, "BLE keyboard open failed: %s", esp_err_to_name(param->open.status));
+                ESP_LOGD(TAG, "BLE keyboard open failed: %s", esp_err_to_name(param->open.status));
             }
             break;
 
@@ -406,6 +448,7 @@ static void bt_keyboard_hidh_callback(void *handler_args, esp_event_base_t base,
             s_pending_open = false;
             s_open_started_us = 0;
             s_dev = NULL;
+            request_reconnect_scan_backoff_reset();
             memset(s_last_keys, 0, sizeof(s_last_keys));
             if (param->close.dev) {
                 esp_hidh_dev_free(param->close.dev);
@@ -420,6 +463,8 @@ static void bt_keyboard_hidh_callback(void *handler_args, esp_event_base_t base,
 static void bt_keyboard_task(void *pvParameters)
 {
     (void)pvParameters;
+
+    bt_keyboard_quiet_stack_logs();
 
     esp_err_t err = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
@@ -489,8 +534,14 @@ static void bt_keyboard_task(void *pvParameters)
     s_initialized = true;
 
     for (;;) {
+        if (s_reset_reconnect_backoff_requested) {
+            s_reset_reconnect_backoff_requested = false;
+            reset_reconnect_scan_backoff();
+        }
+
         if (s_clear_bonds_requested) {
             s_clear_bonds_requested = false;
+            reset_reconnect_scan_backoff();
             int bonded_count = esp_ble_get_bond_device_num();
             if (bonded_count > 0) {
                 esp_ble_bond_dev_t *bonded_devices = calloc((size_t)bonded_count, sizeof(esp_ble_bond_dev_t));
@@ -510,6 +561,7 @@ static void bt_keyboard_task(void *pvParameters)
             s_disconnect_requested = false;
             s_pairing_requested = false;
             s_pending_open = false;
+            reset_reconnect_scan_backoff();
             if (s_scan_active) {
                 esp_ble_gap_stop_scanning();
                 s_scan_active = false;
@@ -534,10 +586,21 @@ static void bt_keyboard_task(void *pvParameters)
             }
         }
 
-        bool should_scan = s_pairing_requested || esp_ble_get_bond_device_num() > 0;
+        bool has_bond = esp_ble_get_bond_device_num() > 0;
+        bool should_scan = s_pairing_requested || (has_bond && reconnect_scan_due());
         if (should_scan && !s_connected && !s_pending_open && !s_opening && !s_scan_active) {
-            esp_ble_gap_start_scanning(BT_KEYBOARD_SCAN_SECONDS);
-            s_scan_active = true;
+            err = esp_ble_gap_start_scanning(BT_KEYBOARD_SCAN_SECONDS);
+            if (err == ESP_OK) {
+                s_scan_active = true;
+                if (!s_pairing_requested) {
+                    reconnect_scan_started();
+                }
+            } else {
+                ESP_LOGW(TAG, "BLE keyboard scan start failed: %s", esp_err_to_name(err));
+                if (!s_pairing_requested) {
+                    reconnect_scan_started();
+                }
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
@@ -579,6 +642,7 @@ bool bt_keyboard_try_dequeue_input(uint8_t *value)
 void bt_keyboard_request_pairing(void)
 {
 #if CONFIG_BT_ENABLED && CONFIG_BT_BLUEDROID_ENABLED && CONFIG_BT_BLE_ENABLED
+    request_reconnect_scan_backoff_reset();
     s_pairing_requested = true;
     s_disconnect_requested = false;
 #endif
@@ -587,6 +651,7 @@ void bt_keyboard_request_pairing(void)
 void bt_keyboard_request_disconnect(void)
 {
 #if CONFIG_BT_ENABLED && CONFIG_BT_BLUEDROID_ENABLED && CONFIG_BT_BLE_ENABLED
+    request_reconnect_scan_backoff_reset();
     s_disconnect_requested = true;
 #endif
 }
@@ -594,6 +659,7 @@ void bt_keyboard_request_disconnect(void)
 void bt_keyboard_request_clear_bonds(void)
 {
 #if CONFIG_BT_ENABLED && CONFIG_BT_BLUEDROID_ENABLED && CONFIG_BT_BLE_ENABLED
+    request_reconnect_scan_backoff_reset();
     s_clear_bonds_requested = true;
 #endif
 }

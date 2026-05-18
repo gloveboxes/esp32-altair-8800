@@ -16,6 +16,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -205,12 +206,24 @@ void websocket_console_init(void)
         return;
     }
 
-    // Create TX task at lower priority than esp_timer
-    BaseType_t ret = xTaskCreatePinnedToCore(tx_task, "ws_tx", WS_TX_TASK_STACK, NULL,
-                                             WS_TX_TASK_PRIORITY, &s_tx_task,
-                                             WS_TX_TASK_CORE);
+    // Create TX task at lower priority than esp_timer. Keep its stack in PSRAM
+    // so BLE/WiFi/internal-DMA users do not starve internal RAM during boot.
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(tx_task, "ws_tx", WS_TX_TASK_STACK, NULL,
+                                                     WS_TX_TASK_PRIORITY, &s_tx_task,
+                                                     WS_TX_TASK_CORE,
+                                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create TX task");
+        ESP_LOGW(TAG, "Failed to create TX task in PSRAM; trying internal RAM");
+        ret = xTaskCreatePinnedToCore(tx_task, "ws_tx", WS_TX_TASK_STACK, NULL,
+                                      WS_TX_TASK_PRIORITY, &s_tx_task,
+                                      WS_TX_TASK_CORE);
+    }
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create TX task (free internal=%lu largest internal=%lu free psram=%lu largest psram=%lu)",
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         vSemaphoreDelete(s_tx_sem);
         vQueueDelete(s_rx_queue);
         vQueueDelete(s_tx_queue);

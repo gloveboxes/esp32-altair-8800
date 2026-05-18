@@ -14,7 +14,9 @@ era dxtimer.h
 
 ft -g file://sdk/dxterm.c
 ft -g file://sdk/dxterm.h
+ft -g file://sdk/dxenv.c
 
+cc dxenv
 cc dxterm
 era dxterm.c
 
@@ -31,12 +33,13 @@ era chat.c
 era dxterm.h
 era chatjson.h
 
-clink chat chatjson dxterm dxtimer
+clink chat chatjson dxterm dxtimer dxenv
 
 era chat.crl
 era chatjson.crl
 era dxterm.crl
 era dxtimer.crl
+era dxenv.*
 
 ft -g file://chat/chat.sys
 ft -g file://chat/chat.cfg

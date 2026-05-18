@@ -27,16 +27,21 @@
 #include "nvs_flash.h"
 
 // NVS namespace and keys
-#define NVS_NAMESPACE   "altair_cfg"
-#define NVS_KEY_SSID    "wifi_ssid"
-#define NVS_KEY_PASS    "wifi_pass"
+#define NVS_NAMESPACE       "altair_cfg"
+#define NVS_ENV_NAMESPACE   "ENVIRONMENT"
+#define NVS_KEY_SSID        "WIFI_SSID"
+#define NVS_KEY_PASS        "WIFI_PASS"
+#define NVS_KEY_UTC_OFFSET  "UTC_OFFSET"
 #define NVS_KEY_RFS_IP  "rfs_ip"
-#define NVS_KEY_OPENAI  "openai_key"
-#define NVS_KEY_CHAT_PROVIDER "chat_provider"
-#define NVS_KEY_CHAT_ENDPOINT "chat_endpoint"
-#define NVS_KEY_WX_KEY        "wx_key"
-#define NVS_KEY_WX_LOC        "wx_loc"
-#define NVS_KEY_WX_UNITS      "wx_units"
+#define NVS_KEY_OPENAI        "OPENAI_KEY"
+#define NVS_KEY_CHAT_PROVIDER "CHAT_PROVIDER"
+#define NVS_KEY_CHAT_ENDPOINT "CHAT_ENDPOINT"
+#define NVS_KEY_CHAT_MODEL    "CHAT_MODEL"
+#define NVS_KEY_CHAT_TOKENS   "CHAT_MAX_TOKENS"
+#define NVS_KEY_CHAT_TEMP     "CHAT_TEMPERATURE"
+#define NVS_KEY_WX_KEY        "OWM_KEY"
+#define NVS_KEY_WX_LOC        "OWM_LOC"
+#define NVS_KEY_WX_UNITS      "OWM_UNITS"
 
 // Static storage for retrieved values
 static char s_ssid[CONFIG_SSID_MAX_LEN + 1] = {0};
@@ -45,6 +50,9 @@ static char s_rfs_ip[CONFIG_RFS_IP_MAX_LEN + 1] = {0};
 static char s_openai_key[CONFIG_OPENAI_KEY_MAX_LEN + 1] = {0};
 static char s_chat_provider[CONFIG_CHAT_PROVIDER_MAX_LEN + 1] = {0};
 static char s_chat_endpoint[CONFIG_CHAT_ENDPOINT_MAX_LEN + 1] = {0};
+static char s_chat_model[CONFIG_CHAT_MODEL_MAX_LEN + 1] = {0};
+static char s_chat_max_tokens[CONFIG_CHAT_MAX_TOKENS_MAX_LEN + 1] = {0};
+static char s_chat_temperature[CONFIG_CHAT_TEMPERATURE_MAX_LEN + 1] = {0};
 static char s_mdns_hostname[32] = {0};
 
 static bool s_initialized = false;
@@ -195,7 +203,7 @@ static bool config_load(void)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         // No config exists yet
         return false;
@@ -219,13 +227,6 @@ static bool config_load(void)
         return false;
     }
 
-    // Load RFS IP (optional)
-    len = sizeof(s_rfs_ip);
-    err = nvs_get_str(handle, NVS_KEY_RFS_IP, s_rfs_ip, &len);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        s_rfs_ip[0] = '\0';  // Not configured, which is fine
-    }
-
     // Load OpenAI key (optional)
     len = sizeof(s_openai_key);
     err = nvs_get_str(handle, NVS_KEY_OPENAI, s_openai_key, &len);
@@ -243,6 +244,39 @@ static bool config_load(void)
     err = nvs_get_str(handle, NVS_KEY_CHAT_ENDPOINT, s_chat_endpoint, &len);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         s_chat_endpoint[0] = '\0';
+    }
+
+    len = sizeof(s_chat_model);
+    err = nvs_get_str(handle, NVS_KEY_CHAT_MODEL, s_chat_model, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_chat_model[0] = '\0';
+    }
+
+    len = sizeof(s_chat_max_tokens);
+    err = nvs_get_str(handle, NVS_KEY_CHAT_TOKENS, s_chat_max_tokens, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_chat_max_tokens[0] = '\0';
+    }
+
+    len = sizeof(s_chat_temperature);
+    err = nvs_get_str(handle, NVS_KEY_CHAT_TEMP, s_chat_temperature, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_chat_temperature[0] = '\0';
+    }
+
+    nvs_close(handle);
+
+    err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        s_config_loaded = true;
+        return true;
+    }
+
+    // Load RFS IP (optional)
+    len = sizeof(s_rfs_ip);
+    err = nvs_get_str(handle, NVS_KEY_RFS_IP, s_rfs_ip, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_rfs_ip[0] = '\0';  // Not configured, which is fine
     }
 
     nvs_close(handle);
@@ -298,7 +332,7 @@ bool altair_config_exists(void)
 
     // Check if SSID exists in NVS
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         return false;
     }
@@ -322,7 +356,7 @@ bool altair_config_save(const char* ssid, const char* password, const char* rfs_
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         printf("[Config] Failed to open NVS for writing: %s\n", esp_err_to_name(err));
         return false;
@@ -344,6 +378,21 @@ bool altair_config_save(const char* ssid, const char* password, const char* rfs_
         return false;
     }
 
+    // Commit changes
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        printf("[Config] Failed to commit NVS: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        printf("[Config] Failed to open NVS for RFS settings: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
     // Save RFS IP if provided
     if (rfs_ip && rfs_ip[0] != '\0') {
         err = nvs_set_str(handle, NVS_KEY_RFS_IP, rfs_ip);
@@ -354,15 +403,19 @@ bool altair_config_save(const char* ssid, const char* password, const char* rfs_
         }
     } else {
         // Clear RFS IP if not provided
-        nvs_erase_key(handle, NVS_KEY_RFS_IP);
+        err = nvs_erase_key(handle, NVS_KEY_RFS_IP);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
     }
 
-    // Commit changes
-    err = nvs_commit(handle);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
     nvs_close(handle);
 
     if (err != ESP_OK) {
-        printf("[Config] Failed to commit NVS: %s\n", esp_err_to_name(err));
+        printf("[Config] Failed to commit RFS settings: %s\n", esp_err_to_name(err));
         return false;
     }
 
@@ -393,14 +446,14 @@ bool config_clear_wifi_settings(void)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         printf("[Config] Failed to open NVS for WiFi clear: %s\n", esp_err_to_name(err));
         return false;
     }
 
     esp_err_t first_err = ESP_OK;
-    const char *keys[] = { NVS_KEY_SSID, NVS_KEY_PASS, NVS_KEY_RFS_IP };
+    const char *keys[] = { NVS_KEY_SSID, NVS_KEY_PASS };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
         err = nvs_erase_key(handle, keys[i]);
         if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND && first_err == ESP_OK) {
@@ -412,6 +465,22 @@ bool config_clear_wifi_settings(void)
         first_err = nvs_commit(handle);
     }
     nvs_close(handle);
+
+    if (first_err == ESP_OK) {
+        err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+        if (err == ESP_OK) {
+            err = nvs_erase_key(handle, NVS_KEY_RFS_IP);
+            if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+                first_err = err;
+            }
+            if (first_err == ESP_OK) {
+                first_err = nvs_commit(handle);
+            }
+            nvs_close(handle);
+        } else {
+            first_err = err;
+        }
+    }
 
     if (first_err != ESP_OK) {
         printf("[Config] Failed to clear WiFi settings: %s\n", esp_err_to_name(first_err));
@@ -463,7 +532,7 @@ bool config_load_openai_key(char* key, size_t key_len)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         return false;
     }
@@ -490,7 +559,7 @@ bool config_save_openai_key(const char* key)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         printf("[Config] Failed to open NVS for OpenAI key: %s\n", esp_err_to_name(err));
         return false;
@@ -540,7 +609,7 @@ static bool config_nvs_get_string(const char *nvs_key, char *value, size_t value
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         return false;
     }
@@ -595,7 +664,7 @@ bool config_save_chat_settings(const char* provider, const char* endpoint,
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         printf("[Config] Failed to open NVS for chat settings: %s\n", esp_err_to_name(err));
         return false;
@@ -629,24 +698,133 @@ bool config_save_chat_settings(const char* provider, const char* endpoint,
     return true;
 }
 
+bool config_load_chat_options(char* model, size_t model_len,
+                              char* max_tokens, size_t max_tokens_len,
+                              char* temperature, size_t temperature_len)
+{
+    bool loaded = false;
+
+    if (model && model_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_CHAT_MODEL, model, model_len);
+    }
+    if (max_tokens && max_tokens_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_CHAT_TOKENS, max_tokens, max_tokens_len);
+    }
+    if (temperature && temperature_len > 0) {
+        loaded |= config_nvs_get_string(NVS_KEY_CHAT_TEMP, temperature, temperature_len);
+    }
+
+    return loaded;
+}
+
+bool config_save_chat_options(const char* model, const char* max_tokens,
+                              const char* temperature)
+{
+    if (!s_initialized) {
+        altair_config_init();
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        printf("[Config] Failed to open NVS for chat options: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    err = config_nvs_set_or_erase(handle, NVS_KEY_CHAT_MODEL, model);
+    if (err == ESP_OK) {
+        err = config_nvs_set_or_erase(handle, NVS_KEY_CHAT_TOKENS, max_tokens);
+    }
+    if (err == ESP_OK) {
+        err = config_nvs_set_or_erase(handle, NVS_KEY_CHAT_TEMP, temperature);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        printf("[Config] Failed to save chat options: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    strncpy(s_chat_model, model ? model : "", CONFIG_CHAT_MODEL_MAX_LEN);
+    s_chat_model[CONFIG_CHAT_MODEL_MAX_LEN] = '\0';
+    strncpy(s_chat_max_tokens, max_tokens ? max_tokens : "", CONFIG_CHAT_MAX_TOKENS_MAX_LEN);
+    s_chat_max_tokens[CONFIG_CHAT_MAX_TOKENS_MAX_LEN] = '\0';
+    strncpy(s_chat_temperature, temperature ? temperature : "", CONFIG_CHAT_TEMPERATURE_MAX_LEN);
+    s_chat_temperature[CONFIG_CHAT_TEMPERATURE_MAX_LEN] = '\0';
+
+    printf("[Config] Chat options saved\n");
+    return true;
+}
+
 bool config_load_weather_settings(char* key, size_t key_len,
                                   char* location, size_t location_len,
                                   char* units, size_t units_len)
 {
     bool loaded = false;
+    nvs_handle_t handle;
+    esp_err_t err;
+    size_t len;
+
+    if (!s_initialized)
+    {
+        altair_config_init();
+    }
+
+    err = nvs_open(NVS_ENV_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK)
+    {
+        if (key && key_len > 0)
+        {
+            key[0] = '\0';
+        }
+        if (location && location_len > 0)
+        {
+            location[0] = '\0';
+        }
+        if (units && units_len > 0)
+        {
+            units[0] = '\0';
+        }
+        return false;
+    }
 
     if (key && key_len > 0)
     {
-        loaded |= config_nvs_get_string(NVS_KEY_WX_KEY, key, key_len);
+        key[0] = '\0';
+        len = key_len;
+        err = nvs_get_str(handle, NVS_KEY_WX_KEY, key, &len);
+        if (err == ESP_OK)
+        {
+            key[key_len - 1] = '\0';
+            loaded |= key[0] != '\0';
+        }
     }
     if (location && location_len > 0)
     {
-        loaded |= config_nvs_get_string(NVS_KEY_WX_LOC, location, location_len);
+        location[0] = '\0';
+        len = location_len;
+        err = nvs_get_str(handle, NVS_KEY_WX_LOC, location, &len);
+        if (err == ESP_OK)
+        {
+            location[location_len - 1] = '\0';
+            loaded |= location[0] != '\0';
+        }
     }
     if (units && units_len > 0)
     {
-        loaded |= config_nvs_get_string(NVS_KEY_WX_UNITS, units, units_len);
+        units[0] = '\0';
+        len = units_len;
+        err = nvs_get_str(handle, NVS_KEY_WX_UNITS, units, &len);
+        if (err == ESP_OK)
+        {
+            units[units_len - 1] = '\0';
+            loaded |= units[0] != '\0';
+        }
     }
+    nvs_close(handle);
     return loaded;
 }
 
@@ -659,7 +837,7 @@ bool config_save_weather_settings(const char* key, const char* location,
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
     {
         printf("[Config] Failed to open NVS for weather settings: %s\n", esp_err_to_name(err));
@@ -720,6 +898,67 @@ bool altair_config_clear(void)
         return false;
     }
 
+    err = nvs_open(NVS_ENV_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        esp_err_t erase_err = nvs_erase_key(handle, NVS_KEY_SSID);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_PASS);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_UTC_OFFSET);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_WX_KEY);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_WX_LOC);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_WX_UNITS);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_OPENAI);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_CHAT_PROVIDER);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_CHAT_ENDPOINT);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_CHAT_MODEL);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_CHAT_TOKENS);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        erase_err = nvs_erase_key(handle, NVS_KEY_CHAT_TEMP);
+        if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = erase_err;
+        }
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
+
+        if (err != ESP_OK) {
+            printf("[Config] Failed to clear environment-backed config: %s\n", esp_err_to_name(err));
+            return false;
+        }
+    }
+
     // Clear local cache
     s_ssid[0] = '\0';
     s_password[0] = '\0';
@@ -727,6 +966,9 @@ bool altair_config_clear(void)
     s_openai_key[0] = '\0';
     s_chat_provider[0] = '\0';
     s_chat_endpoint[0] = '\0';
+    s_chat_model[0] = '\0';
+    s_chat_max_tokens[0] = '\0';
+    s_chat_temperature[0] = '\0';
     time_setup_reset_cache();
     s_config_loaded = false;
 

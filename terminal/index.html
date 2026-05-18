@@ -73,13 +73,14 @@
     }
 
     #terminal {
-      width: 100%;
-      max-width: 100%;
+      display: inline-block;
+      width: auto;
+      max-width: calc(100vw - 40px);
       border: 2px solid #ffffff;
       box-sizing: border-box;
       padding: 0;
       margin: 0 auto;
-      overflow: hidden;
+      overflow: auto;
     }
 
     /* Inlined xterm.css 5.3.0 to ensure the terminal renders when the page
@@ -321,7 +322,7 @@
         XTERM_FONT: 'Courier',
         XTERM_FONT_SIZE: 18,
         XTERM_ROWS: 30,
-        XTERM_COLS: 100,
+        XTERM_COLS: 80,
         MAX_PASTE_LENGTH: 256,
         STORAGE_THEME_KEY: 'altair_theme',
         DEFAULT_THEME: 'dark',

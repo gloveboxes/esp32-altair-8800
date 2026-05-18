@@ -23,8 +23,8 @@
 
 #define ENVIRONMENT_NAMESPACE "ENVIRONMENT"
 
-#define ENV_KEY_SIZE 16
-#define ENV_VALUE_SIZE 64
+#define ENV_KEY_SIZE 17
+#define ENV_VALUE_SIZE 128
 #define ENV_REQUEST_SIZE 512
 #define ENV_ERROR_SIZE 128
 
@@ -1040,7 +1040,6 @@ static size_t environment_help_text(char *buffer, size_t buffer_length)
         "  ENV NOW             Show emulator uptime seconds\r\n"
         "  ENV -I NAME=VALUE   Set only if NAME is undefined\r\n"
         "  ENV -D NAME         Delete NAME\r\n"
-        "  ENV -C              Clear all variables\r\n"
         "  ENV -N              Show variable count\r\n"
         "  ENV -H | HELP | ?   Show this help\r\n"
         "\r\n"
@@ -1052,7 +1051,7 @@ static size_t environment_help_text(char *buffer, size_t buffer_length)
         "  ENV BACKUP=LOCATION\r\n"
         "\r\n"
         "Spaces around =, +, and - are optional.\r\n"
-        "Limits: names 15 chars, values 63 chars. Names are stored uppercase.\r\n"
+        "Limits: names 16 chars, values 127 chars. Names are stored uppercase.\r\n"
         "Ports: command/status 71, data 72, response 200.\r\n");
 }
 
@@ -1092,16 +1091,6 @@ static size_t environment_execute_cli(char *buffer, size_t buffer_length)
     if (environment_is_help(arg1))
     {
         pos = environment_help_text(buffer, buffer_length);
-        environment_reset_request();
-        return pos;
-    }
-
-    if (arg1[0] == '-' && toupper((unsigned char)arg1[1]) == 'C')
-    {
-        rc = environment_clear_values();
-        s_status = (int8_t)rc;
-        pos = environment_write_text(buffer, buffer_length,
-                                     rc == ENV_STATUS_OK ? "All variables cleared\r\n" : "Error clearing variables\r\n");
         environment_reset_request();
         return pos;
     }

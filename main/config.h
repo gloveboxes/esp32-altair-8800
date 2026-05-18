@@ -20,9 +20,12 @@ extern "C" {
 #define CONFIG_SSID_MAX_LEN     32
 #define CONFIG_PASSWORD_MAX_LEN 64
 #define CONFIG_RFS_IP_MAX_LEN   15  // "xxx.xxx.xxx.xxx"
-#define CONFIG_OPENAI_KEY_MAX_LEN 192
+#define CONFIG_OPENAI_KEY_MAX_LEN 127
 #define CONFIG_CHAT_PROVIDER_MAX_LEN 16
-#define CONFIG_CHAT_ENDPOINT_MAX_LEN 160
+#define CONFIG_CHAT_ENDPOINT_MAX_LEN 127
+#define CONFIG_CHAT_MODEL_MAX_LEN 64
+#define CONFIG_CHAT_MAX_TOKENS_MAX_LEN 8
+#define CONFIG_CHAT_TEMPERATURE_MAX_LEN 8
 #define CONFIG_WEATHER_KEY_MAX_LEN 40
 #define CONFIG_WEATHER_LOC_MAX_LEN 64
 #define CONFIG_WEATHER_UNITS_MAX_LEN 12
@@ -120,6 +123,25 @@ bool config_load_chat_settings(char* provider, size_t provider_len,
  */
 bool config_save_chat_settings(const char* provider, const char* endpoint,
 							   const char* key);
+
+/**
+ * @brief Load stored chat request options.
+ *
+ * Any output buffer may be NULL/zero-length to skip that field.
+ *
+ * @return true if at least one option was loaded, false otherwise
+ */
+bool config_load_chat_options(char* model, size_t model_len,
+							  char* max_tokens, size_t max_tokens_len,
+							  char* temperature, size_t temperature_len);
+
+/**
+ * @brief Save chat request options.
+ *
+ * Empty values clear the corresponding setting.
+ */
+bool config_save_chat_options(const char* model, const char* max_tokens,
+							  const char* temperature);
 
 /**
  * @brief Load OpenWeatherMap settings (API key, location, units).

@@ -43,6 +43,8 @@
 #define WF_AGE 10
 #define WF_UNIT 11
 #define WF_ERR 12
+#define WF_CFL 13
+#define WF_FFL 14
 
 #define ESC 27
 #define KCC 3
@@ -73,6 +75,7 @@ int ldiv();
 int lmod();
 int ltoi();
 char *strcpy();
+int strcmp();
 
 /* previous shown digits (-1 = force redraw) */
 int ph0, ph1;
@@ -359,10 +362,12 @@ int stat;
     char unit[4];
     char cmain[40];
     char ctemp[12];
+    char cfeel[12];
     char chum[12];
     char cwind[12];
     char fmain[40];
     char ftemp[12];
+    char ffeel[12];
     int i;
 
     /* Clear the 3 weather rows first. */
@@ -387,21 +392,23 @@ int stat;
     wfget(WF_UNIT);  strcpy(unit,  wbuf);
     wfget(WF_CMAIN); strcpy(cmain, wbuf);
     wfget(WF_CTEMP); strcpy(ctemp, wbuf);
+    wfget(WF_CFL);   strcpy(cfeel, wbuf);
     wfget(WF_CHUM);  strcpy(chum,  wbuf);
     wfget(WF_CWIND); strcpy(cwind, wbuf);
     wfget(WF_FMAIN); strcpy(fmain, wbuf);
     wfget(WF_FTEMP); strcpy(ftemp, wbuf);
+    wfget(WF_FFL);   strcpy(ffeel, wbuf);
 
     curmv(WROW, WCOL);
     printf("\033[1;92mWeather  \033[0;92m%s\033[0m", city);
 
     curmv(WROW + 1, WCOL);
-    printf("\033[0;92m  Now : %s  %s%s  %s%% RH  wind %s\033[0m",
-           cmain, ctemp, unit, chum, cwind);
+    printf("\033[0;92m  Now : %s  %s%s feels %s%s  %s%% RH wind %s\033[0m",
+           cmain, ctemp, unit, cfeel, unit, chum, cwind);
 
     curmv(WROW + 2, WCOL);
-    printf("\033[0;92m  +3h : %s  %s%s\033[0m",
-           fmain, ftemp, unit);
+    printf("\033[0;92m  +3h : %s  %s%s feels %s%s\033[0m",
+           fmain, ftemp, unit, ffeel, unit);
 
     return 0;
 }
@@ -584,7 +591,25 @@ int setup()
 
 /* ---- Main loop ---- */
 
-int main()
+int hlp()
+{
+    printf("CLOCK - Altair local time and weather display\r\n\r\n");
+    printf("Usage: CLOCK [-H]\r\n\r\n");
+    printf("Setup may be done from the startup config menu\r\n");
+    printf("with a serial terminal connected, or from CP/M\r\n");
+    printf("using ESP32 ENV variables.\r\n\r\n");
+    printf("UTC offset examples:\r\n");
+    printf("     ENV UTC_OFFSET=10.0\r\n");
+    printf("     ENV UTC_OFFSET=8.5\r\n");
+    printf("     ENV UTC_OFFSET=-8.5\r\n\r\n");
+    printf("Restart the ESP32/emulator after changing UTC_OFFSET.\r\n");
+    printf("The offset is read once at startup and cached by firmware.\r\n");
+    return 0;
+}
+
+int main(argc, argv)
+int argc;
+char *argv[];
 {
     int chgh, chgm, chgs;
     int key;
@@ -593,6 +618,15 @@ int main()
     int sec;
     int nblink;
     int wnow;
+
+    if (argc > 1)
+    {
+        if (strcmp(argv[1], "-H") == 0 || strcmp(argv[1], "-h") == 0 ||
+            strcmp(argv[1], "/?") == 0)
+        {
+            return hlp();
+        }
+    }
 
     setup();
     cls();
@@ -651,13 +685,13 @@ int main()
             }
 
             /* Re-read cached weather when status changes, or every
-             * 15 minutes while OK. (50ms tick * 18000 = 900s.)
+             * 5 minutes while OK. (50ms tick * 6000 = 300s.)
              * This only reads the ESP32 cache; it does not ask the
              * ESP32 to fetch OpenWeatherMap.
              */
             wtick = wtick + 1;
             wnow = inp(WSTA);
-            if (wnow != wlast || (wnow == WS_OK && wtick >= 18000))
+            if (wnow != wlast || (wnow == WS_OK && wtick >= 6000))
             {
                 drwx(wnow);
                 wlast = wnow;

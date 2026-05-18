@@ -8,8 +8,8 @@
 
 #include "stdio.h"
 
-#define E_KEYSZ  16
-#define E_VALSZ  64
+#define E_KEYSZ  17
+#define E_VALSZ  128
 
 #define E_OK     0
 #define E_EOPEN  -1
