@@ -24,6 +24,15 @@ ALTAIR_COMMAND cmd_switches = NOP;
 
 void cpu_state_set_mode(CPU_OPERATING_MODE mode)
 {
+    /* Entering RUN from the front panel releases any pending HLT, just
+       like flipping the RUN switch on a real Altair. Centralizing this
+       here means every RUNNING transition (toggle, RUN_CMD, RESET,
+       LOAD BASIC, boot) gets consistent HLTA-clear behavior. */
+    if (mode == CPU_RUNNING)
+    {
+        i8080_resume(&cpu);
+    }
+
     g_cpu_mode = mode;
 
     // Update front panel display LED based on CPU state

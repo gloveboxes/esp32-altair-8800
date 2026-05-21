@@ -117,6 +117,7 @@ static uint8_t i8080_ori(intel8080_t *cpu);
 static uint8_t i8080_sphl(intel8080_t *cpu);
 static uint8_t i8080_ei(intel8080_t *cpu);
 static uint8_t i8080_cpi(intel8080_t *cpu);
+static uint8_t i8080_hlt(intel8080_t *cpu);
 
 // Jump table for fast opcode dispatch
 static uint8_t (*const opcode_handlers[256])(intel8080_t *cpu) = {
@@ -149,7 +150,7 @@ static uint8_t (*const opcode_handlers[256])(intel8080_t *cpu) = {
 	[0x68] = i8080_mov,    [0x69] = i8080_mov,    [0x6a] = i8080_mov,    [0x6b] = i8080_mov,
 	[0x6c] = i8080_mov,    [0x6d] = i8080_mov,    [0x6e] = i8080_mov,    [0x6f] = i8080_mov,
 	[0x70] = i8080_mov,    [0x71] = i8080_mov,    [0x72] = i8080_mov,    [0x73] = i8080_mov,
-	[0x74] = i8080_mov,    [0x75] = i8080_mov,    [0x76] = NULL,         [0x77] = i8080_mov,
+	[0x74] = i8080_mov,    [0x75] = i8080_mov,    [0x76] = i8080_hlt,    [0x77] = i8080_mov,
 	[0x78] = i8080_mov,    [0x79] = i8080_mov,    [0x7a] = i8080_mov,    [0x7b] = i8080_mov,
 	[0x7c] = i8080_mov,    [0x7d] = i8080_mov,    [0x7e] = i8080_mov,    [0x7f] = i8080_mov,
 	[0x80] = i8080_add,    [0x81] = i8080_add,    [0x82] = i8080_add,    [0x83] = i8080_add,
@@ -198,6 +199,8 @@ void i8080_reset(intel8080_t *cpu, port_in in, port_out out, read_sense_switches
 	cpu->registers.flags = 0x2;
 	cpu->sense = sense;
 	cpu->cpuStatus = 0x00;
+	cpu->halted = false;
+	cpu->iff = false;
 }
 
 static inline void i8080_update_flag_bit(intel8080_t *cpu, uint8_t flag, int condition)
@@ -222,6 +225,7 @@ static inline void i8080_clear_flag(intel8080_t *cpu, uint8_t flag)
 static inline void i8080_mwrite(intel8080_t *cpu)
 {
 	cpu->cpuStatus &= ~(STATUS_MEMORY_READ);
+	cpu->cpuStatus |= STATUS_WRITE_OUTPUT;
 	write8(cpu->address_bus, cpu->data_bus);
 }
 
@@ -231,9 +235,37 @@ static inline void i8080_mread(intel8080_t *cpu)
 	cpu->data_bus = read8(cpu->address_bus);
 }
 
+/* Read a little-endian 16-bit value via the bus, leaving address_bus/data_bus
+   reflecting the second (high-byte) access. */
+static inline uint16_t i8080_mread16(intel8080_t *cpu, uint16_t addr)
+{
+	cpu->cpuStatus |= STATUS_MEMORY_READ;
+	cpu->address_bus = addr;
+	uint8_t lo = read8(addr);
+	cpu->address_bus = addr + 1;
+	uint8_t hi = read8(addr + 1);
+	cpu->data_bus = hi;
+	return ((uint16_t)hi << 8) | lo;
+}
+
+/* Write a little-endian 16-bit value via the bus, leaving address_bus/data_bus
+   reflecting the second (high-byte) access. */
+static inline void i8080_mwrite16(intel8080_t *cpu, uint16_t addr, uint16_t val)
+{
+	cpu->cpuStatus &= ~STATUS_MEMORY_READ;
+	cpu->cpuStatus |= STATUS_WRITE_OUTPUT;
+	cpu->address_bus = addr;
+	cpu->data_bus = (uint8_t)(val & 0xff);
+	write8(addr, cpu->data_bus);
+	cpu->address_bus = addr + 1;
+	cpu->data_bus = (uint8_t)((val >> 8) & 0xff);
+	write8(addr + 1, cpu->data_bus);
+}
+
 static inline void i8080_pairwrite(intel8080_t *cpu, uint8_t pair, uint16_t val)
 {
-	cpu->cpuStatus &= ~(STATUS_MEMORY_READ);
+	/* Register-pair writes are internal CPU operations and do not
+	   touch the memory bus, so STATUS_MEMORY_READ is left alone. */
 	switch(pair)
 	{
 	case PAIR_BC:
@@ -253,7 +285,7 @@ static inline void i8080_pairwrite(intel8080_t *cpu, uint8_t pair, uint16_t val)
 
 static inline uint16_t i8080_pairread(intel8080_t *cpu, uint8_t pair)
 {
-	cpu->cpuStatus |= STATUS_MEMORY_READ;
+	/* Register-pair reads are internal and do not assert MEMR. */
 	switch(pair)
 	{
 	case PAIR_BC:
@@ -353,9 +385,20 @@ uint8_t i8080_check_condition(intel8080_t *cpu, uint8_t condition)
 	return 0;
 }
 
+void i8080_resume(intel8080_t *cpu)
+{
+	/* Centralized halt-clear used by i8080_examine and front-panel RUN /
+	   mode-toggle paths. Also clears STATUS_HALT so the HLTA LED is
+	   correct even while the CPU mode is still STOPPED (no cycles yet). */
+	cpu->halted = false;
+	cpu->cpuStatus &= ~STATUS_HALT;
+}
+
 void i8080_examine(intel8080_t *cpu, uint16_t address)
 {
-	// Jump to the supplied address
+	// Jump to the supplied address. Loading a new PC from the front panel
+	// also resumes the CPU if it was previously halted by HLT.
+	i8080_resume(cpu);
 	cpu->registers.pc = cpu->address_bus = address;
 	cpu->data_bus = read8(cpu->address_bus);
 }
@@ -381,8 +424,11 @@ void i8080_deposit_next(intel8080_t *cpu, uint8_t data)
 
 void i8080_update_flags(intel8080_t *cpu, uint8_t reg, uint8_t mask)
 {
+	/* Note: FLAGS_H is intentionally not handled here. The half-carry must
+	   be derived from the operands and is set explicitly by each
+	   instruction handler before invoking this helper. */
 	uint8_t val = i8080_regread(cpu, reg);
-	
+
 	if (mask & FLAGS_PARITY) {
 		i8080_update_flag_bit(cpu, FLAGS_PARITY, get_parity_fast(val));
 	}
@@ -394,26 +440,30 @@ void i8080_update_flags(intel8080_t *cpu, uint8_t reg, uint8_t mask)
 	}
 }
 
-void i8080_gensub(intel8080_t *cpu, uint16_t val)
+/* Generic 8-bit subtract with explicit carry-in. The 8080 implements SUB/SBB
+   via two's-complement addition: result = A + ~val + (1 - cy_in). The
+   auxiliary carry and carry-out are taken from the low-nibble and full-byte
+   carries of that addition. cy_in is 0 for SUB/SUI/CMP/CPI and equal to the
+   current CY flag for SBB/SBI. */
+void i8080_gensub(intel8080_t *cpu, uint8_t val, uint8_t cy_in)
 {
-	uint16_t a, b;
-	// Subtract by adding with two-complement of val. Carry-flag meaning becomes inverted since we add.
-	a = cpu->registers.a;
-	b = 0x100 - val;
+	uint8_t a = cpu->registers.a;
+	uint8_t neg = (uint8_t)~val;
+	uint8_t add = (uint8_t)(1 - cy_in);
+	uint16_t lo = (uint16_t)(a & 0xf) + (uint16_t)(neg & 0xf) + add;
+	uint16_t full = (uint16_t)a + neg + add;
 
-	i8080_update_flag_bit(cpu, FLAGS_H, CHECK_HALF_CARRY(a, b));
-	i8080_update_flag_bit(cpu, FLAGS_CARRY, !CHECK_CARRY(a, b));
+	i8080_update_flag_bit(cpu, FLAGS_H, lo > 0xf);
+	i8080_update_flag_bit(cpu, FLAGS_CARRY, !(full > 0xff));
 
-	a += b;
-	cpu->registers.a = a & 0xff;
-
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	cpu->registers.a = (uint8_t)full;
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 }
 
 void i8080_compare(intel8080_t *cpu, uint8_t val)
 {
 	uint8_t tmp_a = cpu->registers.a;
-	i8080_gensub(cpu, val);
+	i8080_gensub(cpu, val, 0);
 	cpu->registers.a = tmp_a;
 }
 
@@ -485,14 +535,16 @@ uint8_t i8080_sta(intel8080_t *cpu)
 
 uint8_t i8080_lhld(intel8080_t *cpu)
 {
-	cpu->registers.hl = read16(read16(cpu->registers.pc+1));
+	uint16_t addr = i8080_mread16(cpu, cpu->registers.pc+1);
+	cpu->registers.hl = i8080_mread16(cpu, addr);
 	cpu->registers.pc+=3;
 	return CYCLES_LHLD;
 }
 
 uint8_t i8080_shld(intel8080_t *cpu)
 {
-	write16(read16(cpu->registers.pc+1), cpu->registers.hl);
+	uint16_t addr = i8080_mread16(cpu, cpu->registers.pc+1);
+	i8080_mwrite16(cpu, addr, cpu->registers.hl);
 	cpu->registers.pc+=3;
 	return CYCLES_SHLD;
 }
@@ -502,7 +554,9 @@ uint8_t i8080_ldax(intel8080_t *cpu)
 {
 	uint8_t pair = RP(cpu->current_op_code);
 
-	cpu->registers.a = read8(i8080_pairread(cpu, pair));
+	cpu->address_bus = i8080_pairread(cpu, pair);
+	i8080_mread(cpu);
+	cpu->registers.a = cpu->data_bus;
 	cpu->registers.pc++;
 	return CYCLES_LDAX;
 }
@@ -511,7 +565,9 @@ uint8_t i8080_ldax(intel8080_t *cpu)
 uint8_t i8080_stax(intel8080_t *cpu)
 {
 	uint8_t pair = RP(cpu->current_op_code);
-	write8(i8080_pairread(cpu, pair), cpu->registers.a);
+	cpu->address_bus = i8080_pairread(cpu, pair);
+	cpu->data_bus = cpu->registers.a;
+	i8080_mwrite(cpu);
 	cpu->registers.pc++;
 	return CYCLES_STAX;
 }
@@ -526,16 +582,21 @@ uint8_t i8080_xchg(intel8080_t *cpu)
 	return CYCLES_XCHG;
 }
 
-void i8080_genadd(intel8080_t *cpu, uint16_t val)
+/* Generic 8-bit add with explicit carry-in. Used by ADD/ADI (cy_in=0) and
+   ADC/ACI (cy_in=current CY). Computing the half-carry from the low nibbles
+   plus the explicit carry avoids losing AC when val+cy would overflow a
+   uint8_t (the bug the previous implementation had). */
+void i8080_genadd(intel8080_t *cpu, uint8_t val, uint8_t cy_in)
 {
 	uint8_t a = cpu->registers.a;
+	uint16_t lo = (uint16_t)(a & 0xf) + (uint16_t)(val & 0xf) + cy_in;
+	uint16_t full = (uint16_t)a + val + cy_in;
 
-	i8080_update_flag_bit(cpu, FLAGS_H, CHECK_HALF_CARRY(a, val));
-	i8080_update_flag_bit(cpu, FLAGS_CARRY, CHECK_CARRY(a, val));
+	i8080_update_flag_bit(cpu, FLAGS_H, lo > 0xf);
+	i8080_update_flag_bit(cpu, FLAGS_CARRY, full > 0xff);
 
-	cpu->registers.a += val;
-
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	cpu->registers.a = (uint8_t)full;
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 }
 
 
@@ -543,14 +604,14 @@ uint8_t i8080_add(intel8080_t *cpu)
 {
 	uint8_t source = SOURCE(cpu->current_op_code);
 	uint8_t val = i8080_regread(cpu, source);
-	i8080_genadd(cpu, val);
+	i8080_genadd(cpu, val, 0);
 	cpu->registers.pc++;
 	return CYCLES_ADD;
 }
 
 uint8_t i8080_adi(intel8080_t *cpu)
 {
-	i8080_genadd(cpu, read8(cpu->registers.pc+1));
+	i8080_genadd(cpu, read8(cpu->registers.pc+1), 0);
 	cpu->registers.pc+=2;
 	return CYCLES_ADI;
 }
@@ -558,22 +619,18 @@ uint8_t i8080_adi(intel8080_t *cpu)
 uint8_t i8080_adc(intel8080_t *cpu)
 {
 	uint8_t source = SOURCE(cpu->current_op_code);
-	uint16_t val = i8080_regread(cpu, source);
-
-	if(cpu->registers.flags & FLAGS_CARRY)
-		val++;
-	i8080_genadd(cpu, val);
+	uint8_t val = i8080_regread(cpu, source);
+	uint8_t cy = (cpu->registers.flags & FLAGS_CARRY) ? 1 : 0;
+	i8080_genadd(cpu, val, cy);
 	cpu->registers.pc++;
 	return CYCLES_ADC;
 }
 
 uint8_t i8080_aci(intel8080_t *cpu)
 {
-	uint16_t val;
-	val = read8(cpu->registers.pc+1);
-	if(cpu->registers.flags & FLAGS_CARRY)
-		val++;
-	i8080_genadd(cpu, val);
+	uint8_t val = read8(cpu->registers.pc+1);
+	uint8_t cy = (cpu->registers.flags & FLAGS_CARRY) ? 1 : 0;
+	i8080_genadd(cpu, val, cy);
 	cpu->registers.pc+=2;
 	return CYCLES_ACI;
 }
@@ -582,14 +639,14 @@ uint8_t i8080_sub(intel8080_t *cpu)
 {
 	uint8_t source = SOURCE(cpu->current_op_code);
 	uint8_t val = i8080_regread(cpu, source);
-	i8080_gensub(cpu, val);
+	i8080_gensub(cpu, val, 0);
 	cpu->registers.pc++;
 	return CYCLES_SUB;
 }
 
 uint8_t i8080_sui(intel8080_t *cpu)
 {
-	i8080_gensub(cpu, read8(cpu->registers.pc+1));
+	i8080_gensub(cpu, read8(cpu->registers.pc+1), 0);
 	cpu->registers.pc+=2;
 	return CYCLES_SUI;
 }
@@ -597,23 +654,18 @@ uint8_t i8080_sui(intel8080_t *cpu)
 uint8_t i8080_sbb(intel8080_t *cpu)
 {
 	uint8_t source = SOURCE(cpu->current_op_code);
-	uint16_t val = i8080_regread(cpu, source);
-
-	if(cpu->registers.flags & FLAGS_CARRY)
-		val++;
-
-	i8080_gensub(cpu, val);
+	uint8_t val = i8080_regread(cpu, source);
+	uint8_t cy = (cpu->registers.flags & FLAGS_CARRY) ? 1 : 0;
+	i8080_gensub(cpu, val, cy);
 	cpu->registers.pc++;
 	return CYCLES_SBB;
 }
 
 uint8_t i8080_sbi(intel8080_t *cpu)
 {
-	uint16_t val;
-	val = read8(cpu->registers.pc+1);
-	if(cpu->registers.flags & FLAGS_CARRY)
-		val++;
-	i8080_gensub(cpu, val);
+	uint8_t val = read8(cpu->registers.pc+1);
+	uint8_t cy = (cpu->registers.flags & FLAGS_CARRY) ? 1 : 0;
+	i8080_gensub(cpu, val, cy);
 	cpu->registers.pc+=2;
 	return CYCLES_SBI;
 }
@@ -627,7 +679,7 @@ uint8_t i8080_inr(intel8080_t *cpu)
 
 	i8080_regwrite(cpu, dest, val + 1);
 
-	i8080_update_flags(cpu, dest, FLAGS_ZERO | FLAGS_PARITY | FLAGS_SIGN | FLAGS_H);
+	i8080_update_flags(cpu, dest, FLAGS_ZERO | FLAGS_PARITY | FLAGS_SIGN);
 	cpu->registers.pc++;
 	return CYCLES_INR;
 }
@@ -640,7 +692,7 @@ uint8_t i8080_dcr(intel8080_t *cpu)
 	i8080_update_flag_bit(cpu, FLAGS_H, CHECK_HALF_CARRY(val, 0xff));
 
 	i8080_regwrite(cpu, dest, val + 0xff);
-	i8080_update_flags(cpu, dest, FLAGS_ZERO | FLAGS_PARITY | FLAGS_SIGN | FLAGS_H);
+	i8080_update_flags(cpu, dest, FLAGS_ZERO | FLAGS_PARITY | FLAGS_SIGN);
 	cpu->registers.pc++;
 	return CYCLES_DCR;
 }
@@ -682,10 +734,13 @@ uint8_t i8080_dad(intel8080_t *cpu)
 uint8_t i8080_ana(intel8080_t *cpu)
 {
 	uint8_t source = SOURCE(cpu->current_op_code);
+	uint8_t val = i8080_regread(cpu, source);
 
-	cpu->registers.a &= i8080_regread(cpu, source);
+	/* 8080 sets AC to bit 3 of (A | operand) before the AND. */
+	i8080_update_flag_bit(cpu, FLAGS_H, (cpu->registers.a | val) & 0x08);
+	cpu->registers.a &= val;
 	i8080_clear_flag(cpu, FLAGS_CARRY);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc++;
 	return CYCLES_ANA;
@@ -693,10 +748,12 @@ uint8_t i8080_ana(intel8080_t *cpu)
 
 uint8_t i8080_ani(intel8080_t *cpu)
 {
-	cpu->registers.a &= read8(cpu->registers.pc+1);
+	uint8_t val = read8(cpu->registers.pc+1);
+
+	i8080_update_flag_bit(cpu, FLAGS_H, (cpu->registers.a | val) & 0x08);
+	cpu->registers.a &= val;
 	i8080_clear_flag(cpu, FLAGS_CARRY);
-	i8080_clear_flag(cpu, FLAGS_H);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc+=2;
 	return CYCLES_ANI;
@@ -709,7 +766,7 @@ uint8_t i8080_ora(intel8080_t *cpu)
 	cpu->registers.a |= i8080_regread(cpu, source);
 	i8080_clear_flag(cpu, FLAGS_CARRY);
 	i8080_clear_flag(cpu, FLAGS_H);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc++;
 	return CYCLES_ORA;
@@ -720,7 +777,7 @@ uint8_t i8080_ori(intel8080_t *cpu)
 	cpu->registers.a |= read8(cpu->registers.pc+1);
 	i8080_clear_flag(cpu, FLAGS_CARRY);
 	i8080_clear_flag(cpu, FLAGS_H);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc+=2;
 	return CYCLES_ORI;
@@ -733,7 +790,7 @@ uint8_t i8080_xra(intel8080_t *cpu)
 	cpu->registers.a ^= i8080_regread(cpu, source);
 	i8080_clear_flag(cpu, FLAGS_CARRY);
 	i8080_clear_flag(cpu, FLAGS_H);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc++;
 	return CYCLES_XRA;
@@ -744,7 +801,7 @@ uint8_t i8080_xri(intel8080_t *cpu)
 	cpu->registers.a ^= read8(cpu->registers.pc+1);
 	i8080_clear_flag(cpu, FLAGS_CARRY);
 	i8080_clear_flag(cpu, FLAGS_H);
-	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY | FLAGS_CARRY | FLAGS_H);
+	i8080_update_flags(cpu, REGISTER_A, FLAGS_ZERO | FLAGS_SIGN | FLAGS_PARITY);
 
 	cpu->registers.pc+=2;
 	return CYCLES_XRI;
@@ -753,22 +810,22 @@ uint8_t i8080_xri(intel8080_t *cpu)
 uint8_t i8080_ei(intel8080_t *cpu)
 {
 	cpu->registers.pc++;
-	i8080_set_flag(cpu, FLAGS_IF);
+	cpu->iff = true;
 	return CYCLES_EI;
 }
 
 uint8_t i8080_di(intel8080_t *cpu)
 {
 	cpu->registers.pc++;
-	i8080_clear_flag(cpu, FLAGS_IF);
+	cpu->iff = false;
 	return CYCLES_DI;
 }
 
 uint8_t i8080_xthl(intel8080_t *cpu)
 {
-	uint16_t temp = read16(cpu->registers.sp);
-
-	write16(cpu->registers.sp, cpu->registers.hl);
+	cpu->cpuStatus |= STATUS_STACK;
+	uint16_t temp = i8080_mread16(cpu, cpu->registers.sp);
+	i8080_mwrite16(cpu, cpu->registers.sp, cpu->registers.hl);
 	cpu->registers.hl = temp;
 	cpu->registers.pc++;
 	return CYCLES_XTHL;
@@ -785,6 +842,7 @@ uint8_t i8080_in(intel8080_t *cpu)
 {
 	static uint8_t character = 0;
 	uint8_t port = read8(cpu->registers.pc + 1);
+	cpu->cpuStatus |= STATUS_PORT_INPUT;
 
 	switch(port)
 	{
@@ -792,7 +850,6 @@ uint8_t i8080_in(intel8080_t *cpu)
 		cpu->registers.a = 0x00;
 		break;
 	case 0x1:
-		cpu->cpuStatus |= STATUS_PORT_INPUT;
 		cpu->registers.a = cpu->term_in();
 		// cpu->term_out(cpu->registers.a);
 		break;
@@ -844,10 +901,10 @@ uint8_t i8080_in(intel8080_t *cpu)
 uint8_t i8080_out(intel8080_t *cpu)
 {
 	uint8_t port = read8(cpu->registers.pc + 1);
+	cpu->cpuStatus |= STATUS_PORT_OUTPUT | STATUS_WRITE_OUTPUT;
 	switch(port)
 	{
 	case 0x1:
-		cpu->cpuStatus |= STATUS_PORT_OUTPUT;
 		cpu->term_out(cpu->registers.a);
 		break;
 	case 0x8:
@@ -879,13 +936,17 @@ uint8_t i8080_push(intel8080_t *cpu)
 	uint8_t pair = RP(cpu->current_op_code);
 	uint16_t val;
 
-	if(pair == PAIR_SP)
-		val = cpu->registers.af;
-	else
+	if(pair == PAIR_SP) {
+		/* PUSH PSW: low byte is the flag register, but the real 8080
+		   always pushes bit1=1, bit3=0, bit5=0. */
+		uint8_t f = (cpu->registers.flags & 0xD5) | 0x02;
+		val = ((uint16_t)cpu->registers.a << 8) | f;
+	} else {
 		val = i8080_pairread(cpu, pair);
+	}
 
 	cpu->registers.sp-=2;
-	write16(cpu->registers.sp, val);
+	i8080_mwrite16(cpu, cpu->registers.sp, val);
 
 	cpu->registers.pc++;
 	return CYCLES_PUSH;
@@ -895,12 +956,16 @@ uint8_t i8080_pop(intel8080_t *cpu)
 {
 	cpu->cpuStatus |= STATUS_STACK;
 	uint8_t pair = RP(cpu->current_op_code);
-	uint16_t val = read16(cpu->registers.sp);
+	uint16_t val = i8080_mread16(cpu, cpu->registers.sp);
 	cpu->registers.sp+=2;
-	if(pair == PAIR_SP)
+	if(pair == PAIR_SP) {
 		cpu->registers.af = val;
-	else
+		/* POP PSW: keep only the documented PSW bits and force the
+		   fixed bit pattern. */
+		cpu->registers.flags = (cpu->registers.flags & 0xD5) | 0x02;
+	} else {
 		i8080_pairwrite(cpu, pair, val);
+	}
 
 	cpu->registers.pc++;
 	return CYCLES_POP;
@@ -937,7 +1002,7 @@ uint8_t i8080_rlc(intel8080_t *cpu)
 	}
 
 	cpu->registers.pc++;
-	return CYCLES_RAL;
+	return CYCLES_RLC;
 }
 
 uint8_t i8080_rrc(intel8080_t *cpu)
@@ -958,7 +1023,7 @@ uint8_t i8080_rrc(intel8080_t *cpu)
 	}
 
 	cpu->registers.pc++;
-	return CYCLES_RAR;
+	return CYCLES_RRC;
 }
 
 uint8_t i8080_ral(intel8080_t *cpu)
@@ -977,7 +1042,7 @@ uint8_t i8080_ral(intel8080_t *cpu)
 		i8080_clear_flag(cpu, FLAGS_CARRY);
 
 	cpu->registers.pc++;
-	return CYCLES_RLC;
+	return CYCLES_RAL;
 }
 
 uint8_t i8080_rar(intel8080_t *cpu)
@@ -997,12 +1062,12 @@ uint8_t i8080_rar(intel8080_t *cpu)
 		i8080_clear_flag(cpu, FLAGS_CARRY);
 
 	cpu->registers.pc++;
-	return CYCLES_RRC;
+	return CYCLES_RAR;
 }
 
 uint8_t i8080_jmp(intel8080_t *cpu)
 {
-	cpu->registers.pc = read16(cpu->registers.pc+1);
+	cpu->registers.pc = i8080_mread16(cpu, cpu->registers.pc+1);
 	return CYCLES_JMP;
 }
 
@@ -1025,7 +1090,7 @@ uint8_t i8080_jccc(intel8080_t *cpu)
 uint8_t i8080_ret(intel8080_t *cpu)
 {
 	cpu->cpuStatus |= STATUS_STACK;
-	cpu->registers.pc = read16(cpu->registers.sp);
+	cpu->registers.pc = i8080_mread16(cpu, cpu->registers.sp);
 	cpu->registers.sp+=2;
 	return CYCLES_RET;
 }
@@ -1037,12 +1102,11 @@ uint8_t i8080_rccc(intel8080_t *cpu)
 	if(i8080_check_condition(cpu, condition))
 	{
 		i8080_ret(cpu);
+		return CYCLES_RCC_TAKEN;
 	}
-	else
-	{
-		cpu->registers.pc++;
-	}
-	return CYCLES_RET;
+
+	cpu->registers.pc++;
+	return CYCLES_RCC_NOTTAKEN;
 }
 
 uint8_t i8080_rst(intel8080_t *cpu)
@@ -1051,21 +1115,22 @@ uint8_t i8080_rst(intel8080_t *cpu)
 	uint8_t vec = DESTINATION(cpu->current_op_code);
 
 	cpu->registers.sp-=2;
-	write16(cpu->registers.sp, cpu->registers.pc + 1);
+	i8080_mwrite16(cpu, cpu->registers.sp, cpu->registers.pc + 1);
 
 	cpu->registers.pc = vec*8;
 
-	return CYCLES_RET;
+	return CYCLES_RST;
 }
 
 uint8_t i8080_call(intel8080_t *cpu)
 {
 	cpu->cpuStatus |= STATUS_STACK;
+	uint16_t target = i8080_mread16(cpu, cpu->registers.pc + 1);
 	cpu->registers.sp-=2;
-	write16(cpu->registers.sp, cpu->registers.pc + 3);
+	i8080_mwrite16(cpu, cpu->registers.sp, cpu->registers.pc + 3);
 
-	cpu->registers.pc = read16(cpu->registers.pc + 1);
-	return CYCLES_JMP;
+	cpu->registers.pc = target;
+	return CYCLES_CALL;
 }
 
 uint8_t i8080_cccc(intel8080_t *cpu)
@@ -1075,13 +1140,11 @@ uint8_t i8080_cccc(intel8080_t *cpu)
 	if(i8080_check_condition(cpu, condition))
 	{
 		i8080_call(cpu);
-	}
-	else
-	{
-		cpu->registers.pc+=3;
+		return CYCLES_CCC_TAKEN;
 	}
 
-	return CYCLES_CALL;
+	cpu->registers.pc+=3;
+	return CYCLES_CCC_NOTTAKEN;
 }
 
 uint8_t i8080_pchl(intel8080_t *cpu)
@@ -1126,35 +1189,79 @@ void i8080_fetch_next_op(intel8080_t *cpu)
 {
 	cpu->address_bus = cpu->registers.pc;
 	i8080_mread(cpu);
+	cpu->cpuStatus |= STATUS_OP_CODE_FETCH;
 }
 
 uint8_t i8080_daa(intel8080_t *cpu)
 {
-	uint8_t val, add = 0;
-	val = i8080_regread(cpu, REGISTER_A);
+	/* DAA per 8080 programmer's manual. The step-2 condition must be
+	   evaluated against the ORIGINAL high nibble, not the post-step-1
+	   value, because step 1 (adding 6 when lsb > 9) can wrap the byte
+	   and lose the carry-into-msb. The canonical formulation:
 
-	if((val & 0xf) > 9 || cpu->registers.flags & FLAGS_H)
-		add += 0x06;
+	     step 1 fires if   AC || lsb > 9
+	     step 2 fires if   CY || msb > 9 || (msb >= 9 && lsb > 9)
 
-	val += add;
+	   The (msb >= 9 && lsb > 9) term covers the case where step 1
+	   carries from the low nibble into a high nibble that is exactly 9,
+	   turning it into A and therefore needing step 2.
 
-	if(((val & 0xf0) >> 4) > 9 || cpu->registers.flags & FLAGS_CARRY)
-		add += 0x60;
+	   CY out is set if CY was set on entry OR step 2 fired. AC and the
+	   ZSP flags are derived from the actual ADD (delegated to
+	   i8080_genadd), which handles the half-carry from step 1's +6
+	   correctly. Caught by 8080EXM <daa,cma,stc,cmc>. */
+	uint8_t a   = cpu->registers.a;
+	uint8_t lsb = a & 0x0f;
+	uint8_t msb = a >> 4;
+	uint8_t cy_in = (cpu->registers.flags & FLAGS_CARRY) ? 1 : 0;
+	uint8_t h_in  = (cpu->registers.flags & FLAGS_H)     ? 1 : 0;
 
-	i8080_genadd(cpu, add);
+	uint8_t correction = 0;
+	uint8_t cy_out = cy_in;
+
+	if (h_in || lsb > 9) {
+		correction += 0x06;
+	}
+	if (cy_in || msb > 9 || (msb >= 9 && lsb > 9)) {
+		correction += 0x60;
+		cy_out = 1;
+	}
+
+	i8080_genadd(cpu, correction, 0);
+	i8080_update_flag_bit(cpu, FLAGS_CARRY, cy_out);
 
 	cpu->registers.pc++;
 	return CYCLES_DAA;
 }
 
+uint8_t i8080_hlt(intel8080_t *cpu)
+{
+	/* On the real 8080, HLT advances PC past the instruction and then
+	   stops the CPU until an interrupt arrives. Without an interrupt
+	   path wired up here we simply mark the CPU halted; i8080_cycle()
+	   short-circuits while halted and keeps STATUS_HALT asserted so
+	   the HLTA front-panel LED stays lit. */
+	cpu->registers.pc++;
+	cpu->halted = true;
+	cpu->cpuStatus |= STATUS_HALT;
+	return CYCLES_HLT;
+}
+
 void i8080_cycle(intel8080_t *cpu)
 {
+	if (UNLIKELY(cpu->halted)) {
+		/* Keep HLTA asserted while halted. The bus values stay at the
+		   instruction following HLT, matching real-8080 behavior. */
+		cpu->cpuStatus = STATUS_HALT;
+		return;
+	}
+
 	cpu->cpuStatus = 0;
 	i8080_fetch_next_op(cpu);
 
 	uint8_t op_code = cpu->current_op_code = cpu->data_bus;
 	uint8_t (*handler)(intel8080_t *) = opcode_handlers[op_code];
-	
+
 	if (LIKELY(handler != NULL)) {
 		handler(cpu);
 	} else {

@@ -75,15 +75,20 @@
 #define CYCLES_RRC		4
 #define CYCLES_RAL		4
 #define CYCLES_RAR		4
-#define CYCLES_RET		5
+#define CYCLES_RET		10
+#define CYCLES_RCC_TAKEN	11
+#define CYCLES_RCC_NOTTAKEN	5
 #define CYCLES_CALL		17
+#define CYCLES_CCC_TAKEN	17
+#define CYCLES_CCC_NOTTAKEN	11
 #define CYCLES_RST		11
 #define CYCLES_CMP		4
 #define CYCLES_CPI		7
-#define CYCLES_STC		1
-#define CYCLES_CMC		2
-#define CYCLES_CMA		2
+#define CYCLES_STC		4
+#define CYCLES_CMC		4
+#define CYCLES_CMA		4
 #define CYCLES_PCHL		5
-#define CYCLES_DAA		5
+#define CYCLES_DAA		4
+#define CYCLES_HLT		7
 
 #endif

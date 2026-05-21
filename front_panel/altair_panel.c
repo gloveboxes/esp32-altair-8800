@@ -410,14 +410,42 @@ void altair_panel_run_startup_test(uint32_t duration_ms)
     present_full_panel(0, 0, 0);
 }
 
+// Raw CPU status bits as set by the emulator core (intel8080.c).
+// These don't match the panel's logical layout, so they need translating.
+#define RAW_STATUS_MEMORY_READ   0x80
+#define RAW_STATUS_PORT_INPUT    0x40
+#define RAW_STATUS_OP_CODE_FETCH 0x20
+#define RAW_STATUS_PORT_OUTPUT   0x10
+#define RAW_STATUS_HALT          0x08
+#define RAW_STATUS_STACK         0x04
+#define RAW_STATUS_WRITE_OUTPUT  0x02
+#define RAW_STATUS_INTERRUPT     0x01
+
+static uint16_t translate_cpu_status(const intel8080_t *cpu)
+{
+    uint8_t raw = cpu->cpuStatus;
+    uint16_t out = 0;
+
+    if (cpu->iff)                          out |= STATUS_INTE;
+    if (raw & RAW_STATUS_MEMORY_READ)      out |= STATUS_MEMR;
+    if (raw & RAW_STATUS_PORT_INPUT)       out |= STATUS_INP;
+    if (raw & RAW_STATUS_OP_CODE_FETCH)    out |= STATUS_M1;
+    if (raw & RAW_STATUS_PORT_OUTPUT)      out |= STATUS_OUT;
+    if (raw & RAW_STATUS_HALT)             out |= STATUS_HLTA;
+    if (raw & RAW_STATUS_STACK)            out |= STATUS_STCK;
+    if (raw & RAW_STATUS_WRITE_OUTPUT)     out |= STATUS_WO;
+    if (raw & RAW_STATUS_INTERRUPT)        out |= STATUS_INT;
+    return out;
+}
+
 void altair_panel_update(const intel8080_t *cpu)
 {
     if (!panel_initialized || cpu == NULL) {
         return;
     }
-    
-    // Read current CPU state directly from CPU struct
-    uint16_t cur_status = cpu->cpuStatus;
+
+    // Translate raw emulator status bits into the panel's logical layout.
+    uint16_t cur_status = translate_cpu_status(cpu);
     uint16_t cur_address = cpu->address_bus;
     uint8_t cur_data = cpu->data_bus;
     

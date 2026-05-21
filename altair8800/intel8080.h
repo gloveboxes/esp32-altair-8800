@@ -91,6 +91,9 @@ typedef struct
 	read_sense_switches sense;
 	uint8_t cpuStatus;
 
+	bool halted;	// True when CPU is halted by HLT instruction
+	bool iff;	// Interrupt enable flip-flop (EI/DI). Not part of PSW.
+
 	disk_controller_t disk_controller;
 } intel8080_t;
 
@@ -101,6 +104,10 @@ void i8080_deposit_next(intel8080_t *cpu, uint8_t data);
 
 void i8080_examine(intel8080_t *cpu, uint16_t address);
 void i8080_examine_next(intel8080_t *cpu);
+
+/* Resume execution after a HLT. Clears the halted latch and the HLTA
+   status bit so the front panel reflects the new state immediately. */
+void i8080_resume(intel8080_t *cpu);
 
 void i8080_cycle(intel8080_t *cpu);
 

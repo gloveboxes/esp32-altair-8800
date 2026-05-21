@@ -58,23 +58,23 @@ To access the virtual front panel, you must be connected to the Altair emulator 
 
 In this example you'll enter a simple set of instructions for a loop.
 
-    1. Enter **100000000** (0x0100).
-    2. Enter **e** to set the CPU current instruction pointer to address 0x0100.
-    3. Enter **11000011**, the Intel 8080 opcode for Jmp.
-    4. Enter **d** to deposit the instruction at address 0x0100.
-    5. Enter **11** (0x03) to set the **low-order** address byte for the Jmp instruction.
-    6. Enter **dn** to increment the CPU instruction pointer to address 0x0101 and deposit the low-order byte.
-    7. Enter **1** (0x01) to set the **high-order** address byte for the Jmp instruction.
-    8. Enter **dn** to increment the CPU instruction pointer to address 0x0102 and deposit the high-order byte.
-    9. Enter **11000011**, the Intel 8080 opcode for Jmp.
-    10. Enter **dn** to increment the CPU instruction pointer to address 0x0103 and deposit the instruction.
-    11. Enter **0** (0x00) to set the **low-order** address byte for the Jmp instruction.
-    12. Enter **dn** to increment the CPU instruction pointer to address 0x0104 and deposit the low-order byte.
-    13. Enter **1** (0x01) to set the **high-order** address byte for the Jmp instruction.
-    14. Enter **dn** to increment the CPU instruction pointer to address 0x0105 and deposit the high-order byte.
-    15. Enter **100000000** (0x0100).
-    16. Enter **e** to set the CPU current instruction pointer to address 0x0100.
-    17. Single step and watch the code execute.
+ 1. Enter **100000000** (0x0100).
+ 2. Enter **e** to set the CPU current instruction pointer to address 0x0100.
+ 3. Enter **11000011**, the Intel 8080 opcode for Jmp.
+ 4. Enter **d** to deposit the instruction at address 0x0100.
+ 5. Enter **11** (0x03) to set the **low-order** address byte for the Jmp instruction.
+ 6. Enter **dn** to increment the CPU instruction pointer to address 0x0101 and deposit the low-order byte.
+ 7. Enter **1** (0x01) to set the **high-order** address byte for the Jmp instruction.
+ 8. Enter **dn** to increment the CPU instruction pointer to address 0x0102 and deposit the high-order byte.
+ 9. Enter **11000011**, the Intel 8080 opcode for Jmp.
+ 10. Enter **dn** to increment the CPU instruction pointer to address 0x0103 and deposit the instruction.
+ 11. Enter **0** (0x00) to set the **low-order** address byte for the Jmp instruction.
+ 12. Enter **dn** to increment the CPU instruction pointer to address 0x0104 and deposit the low-order byte.
+ 13. Enter **1** (0x01) to set the **high-order** address byte for the Jmp instruction.
+ 14. Enter **dn** to increment the CPU instruction pointer to address 0x0105 and deposit the high-order byte.
+ 15. Enter **100000000** (0x0100).
+ 16. Enter **e** to set the CPU current instruction pointer to address 0x0100.
+ 17. Single step and watch the code execute.
 
 ## The List virtual front panel command
 
