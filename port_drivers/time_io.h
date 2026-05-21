@@ -12,6 +12,7 @@
  * - Port 41: Seconds since boot
  * - Port 42: UTC wall clock (ISO 8601 format)
  * - Port 43: Local wall clock (ISO 8601 format)
+ * - Port 44: Local long date (e.g. "Thursday, 21 May 2026")
  */
 
 #pragma once

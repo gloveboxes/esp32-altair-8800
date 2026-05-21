@@ -19,6 +19,7 @@
 #define T2H 28
 #define T2L 29
 #define TPRT 43
+#define DPRT 44
 #define UPRT 41
 #define RPRT 200
 
@@ -52,12 +53,15 @@
 #define BROW 10
 #define BCOL 14
 
-/* Weather panel rows */
-#define WROW 21
-#define WCOL 22
+/* Date row, centered between clock digits and weather panel */
+#define DROW 18
 
-/* Footer row (single centered line) */
-#define FROW 27
+/* Weather panel rows (centered as a block) */
+#define WROW 22
+
+/* Uptime sits quietly in the top-right corner, inside the border */
+#define UROW 2
+#define ULEN 15  /* "Uptime 00:00:00" */
 
 #define SCRW 80
 #define SCRH 30
@@ -76,6 +80,8 @@ int lmod();
 int ltoi();
 char *strcpy();
 int strcmp();
+int strlen();
+int sprintf();
 
 /* previous shown digits (-1 = force redraw) */
 int ph0, ph1;
@@ -93,6 +99,10 @@ int blink;
 
 /* active time text: HH:MM */
 char timtxt[6];
+
+/* date string buffer and previous date (to detect changes) */
+char datbuf[40];
+char pdate[40];
 
 /* Weather field buffer and last-known status */
 char wbuf[64];
@@ -287,16 +297,53 @@ int max;
 }
 
 /*
+ * Trigger the host date driver and pull the long date string
+ * ("Weekday, DD Month YYYY") into datbuf. Returns length.
+ */
+int getdate()
+{
+    outp(DPRT, 0);
+    return rdstr(datbuf, 39);
+}
+
+/*
+ * Render the date centered on DROW in bright yellow (same as
+ * uptime). Clears the whole row first so shorter strings don't
+ * leave stale tails behind.
+ */
+int shodat(row)
+int row;
+{
+    int len, col, c;
+
+    len = 0;
+    while (datbuf[len])
+        len = len + 1;
+
+    /* Erase row (within border). */
+    curmv(row, 3);
+    for (c = 3; c < SCRW - 2; c = c + 1)
+        chout(' ');
+
+    col = ((SCRW - len) / 2) + 1;
+    if (col < 3)
+        col = 3;
+
+    curmv(row, col);
+    printf("\033[1;93m%s\033[0m", datbuf);
+    return 0;
+}
+
+/*
  * Read uptime seconds from port 41 and print as HH:MM:SS at
  * (row, col). Uses BDS C long-int library.
  */
 char upbuf[32];
 
 /*
- * Render the centered footer line:
- *   Uptime: HH:MM:SS
- * Always written as one full-width line so the uptime field
- * doesn't leave stale characters behind.
+ * Render the uptime in the top-right corner, inside the border,
+ * in dim white so it reads as quiet telemetry rather than
+ * competing with the clock or date.
  */
 int shoupt(row)
 int row;
@@ -304,6 +351,7 @@ int row;
     char lup[4], l3600[4], l60[4];
     char lhr[4], lrem[4], lmn[4], lsc[4];
     int hrs, mns, scs;
+    int col;
 
     outp(UPRT, 1);
     rdstr(upbuf, 31);
@@ -318,8 +366,9 @@ int row;
     mns = ltoi(lmn);
     scs = ltoi(lsc);
 
-    curmv(row, 33);
-    printf("\033[1;93mUptime: %02d:%02d:%02d\033[0m",
+    col = SCRW - 2 - ULEN;
+    curmv(row, col);
+    printf("\033[2;37mUptime %02d:%02d:%02d\033[0m",
            hrs, mns, scs);
     return 0;
 }
@@ -338,22 +387,23 @@ int id;
 }
 
 /*
- * Erase WCOL..SCRW-3 on `row` (preserves border).
+ * Erase the full inside-border span on `row` (cols 3..SCRW-3).
  */
 int werase(row)
 int row;
 {
     int c;
 
-    curmv(row, WCOL);
-    for (c = WCOL; c < SCRW - 2; c = c + 1)
+    curmv(row, 3);
+    for (c = 3; c < SCRW - 2; c = c + 1)
         chout(' ');
     return 0;
 }
 
 /*
- * Render the weather panel in green. Reads each field
- * fresh so updates from the background task show up.
+ * Render the weather panel in green, centered as a block. All
+ * three rows start at the same column (computed from the widest
+ * line) so the "Now"/"+3h" labels stay aligned.
  */
 int drwx(stat)
 int stat;
@@ -368,7 +418,8 @@ int stat;
     char fmain[40];
     char ftemp[12];
     char ffeel[12];
-    int i;
+    char l0[80], l1[80], l2[80];
+    int n0, n1, n2, maxw, scol, i;
 
     /* Clear the 3 weather rows first. */
     for (i = 0; i < 3; i = i + 1)
@@ -382,7 +433,11 @@ int stat;
     if (stat == WS_ERR)
     {
         wfget(WF_ERR);
-        curmv(WROW, WCOL);
+        sprintf(l0, "Weather: %s", wbuf);
+        n0 = strlen(l0);
+        scol = ((SCRW - n0) / 2) + 1;
+        if (scol < 3) scol = 3;
+        curmv(WROW, scol);
         printf("\033[1;92mWeather: \033[1;91m%s\033[0m", wbuf);
         return 0;
     }
@@ -399,14 +454,31 @@ int stat;
     wfget(WF_FTEMP); strcpy(ftemp, wbuf);
     wfget(WF_FFL);   strcpy(ffeel, wbuf);
 
-    curmv(WROW, WCOL);
+    /* Build plain (uncolored) lines just for width measurement. */
+    sprintf(l0, "Weather  %s", city);
+    sprintf(l1, "  Now : %s  %s%s feels %s%s  %s%% RH wind %s",
+            cmain, ctemp, unit, cfeel, unit, chum, cwind);
+    sprintf(l2, "  +3h : %s  %s%s feels %s%s",
+            fmain, ftemp, unit, ffeel, unit);
+
+    n0 = strlen(l0);
+    n1 = strlen(l1);
+    n2 = strlen(l2);
+    maxw = n0;
+    if (n1 > maxw) maxw = n1;
+    if (n2 > maxw) maxw = n2;
+
+    scol = ((SCRW - maxw) / 2) + 1;
+    if (scol < 3) scol = 3;
+
+    curmv(WROW, scol);
     printf("\033[1;92mWeather  \033[0;92m%s\033[0m", city);
 
-    curmv(WROW + 1, WCOL);
+    curmv(WROW + 1, scol);
     printf("\033[0;92m  Now : %s  %s%s feels %s%s  %s%% RH wind %s\033[0m",
            cmain, ctemp, unit, cfeel, unit, chum, cwind);
 
-    curmv(WROW + 2, WCOL);
+    curmv(WROW + 2, scol);
     printf("\033[0;92m  +3h : %s  %s%s feels %s%s\033[0m",
            fmain, ftemp, unit, ffeel, unit);
 
@@ -585,6 +657,8 @@ int setup()
     blink = 0;
     wlast = -1;
     wtick = 0;
+    datbuf[0] = 0;
+    pdate[0] = 0;
 
     return 0;
 }
@@ -633,8 +707,8 @@ char *argv[];
     hidecr();
     brdr();
 
-    /* Initial footer line and weather panel. */
-    shoupt(FROW);
+    /* Initial uptime stat (top-right) and weather panel. */
+    shoupt(UROW);
     drwx(WS_NONE);
 
     tick = 0;
@@ -669,9 +743,24 @@ char *argv[];
                     pm0 = gm0; pm1 = gm1;
                 }
 
-                /* Refresh footer once per second. */
+                /* Refresh uptime once per second. */
                 if (chgs || chgm || chgh)
-                    shoupt(FROW);
+                    shoupt(UROW);
+
+                /* Refresh date only when the minute rolls over
+                 * (and on the first valid tick, when pdate is
+                 * still empty). Visible redraw still gated by a
+                 * string compare, so it only repaints at midnight.
+                 */
+                if (chgm || chgh || pdate[0] == 0)
+                {
+                    getdate();
+                    if (strcmp(datbuf, pdate) != 0)
+                    {
+                        shodat(DROW);
+                        strcpy(pdate, datbuf);
+                    }
+                }
             }
             else
             {

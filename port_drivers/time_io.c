@@ -12,6 +12,7 @@
  * - Port 41: Seconds since boot
  * - Port 42: UTC wall clock (ISO 8601 format)
  * - Port 43: Local wall clock using configured timezone offset (ISO 8601 format)
+ * - Port 44: Local long date using configured timezone offset (e.g. "Thursday, 21 May 2026")
  */
 
 #include "port_drivers/time_io.h"
@@ -109,6 +110,32 @@ static size_t format_wall_clock(char* buffer, size_t buffer_length, bool utc)
     return len;
 }
 
+/**
+ * @brief Format local long date as "Weekday, DD Month YYYY"
+ */
+static size_t format_local_date(char* buffer, size_t buffer_length)
+{
+    if (buffer == NULL || buffer_length == 0)
+    {
+        return 0;
+    }
+
+    time_t now = time(NULL);
+    if (now == 0)
+    {
+        return format_boot_relative_time(buffer, buffer_length);
+    }
+
+    network_time_apply_timezone();
+    struct tm* result = localtime(&now);
+    if (result == NULL)
+    {
+        return format_boot_relative_time(buffer, buffer_length);
+    }
+
+    return strftime(buffer, buffer_length, "%A, %d %B %Y", result);
+}
+
 size_t time_output(int port, uint8_t data, char* buffer, size_t buffer_length)
 {
     size_t len = 0;
@@ -155,6 +182,11 @@ size_t time_output(int port, uint8_t data, char* buffer, size_t buffer_length)
         // Local wall clock
         case 43:
             len = format_wall_clock(buffer, buffer_length, false);
+            break;
+
+        // Local long date
+        case 44:
+            len = format_local_date(buffer, buffer_length);
             break;
 
         default:
