@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/dave/GitHub/esp32/esp32-altair-8800/build-host-tests/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

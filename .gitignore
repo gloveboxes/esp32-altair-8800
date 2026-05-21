@@ -2,6 +2,7 @@
 build/
 build-freenove/
 build-waveshare/
+build-host-tests/
 reference/
 
 # Generated config

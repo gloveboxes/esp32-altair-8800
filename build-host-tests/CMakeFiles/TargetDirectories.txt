@@ -1,4 +1,0 @@
-/Users/dave/GitHub/esp32/esp32-altair-8800/build-host-tests/CMakeFiles/run_8080_tests.dir
-/Users/dave/GitHub/esp32/esp32-altair-8800/build-host-tests/CMakeFiles/test.dir
-/Users/dave/GitHub/esp32/esp32-altair-8800/build-host-tests/CMakeFiles/edit_cache.dir
-/Users/dave/GitHub/esp32/esp32-altair-8800/build-host-tests/CMakeFiles/rebuild_cache.dir
