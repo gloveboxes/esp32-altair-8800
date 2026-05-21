@@ -1,0 +1,5 @@
+# Drop CP/M .COM 8080 diagnostic ROMs here. Suggested files:
+#   TST8080.COM   - Microcosm Associates 8080/8085 CPU Diagnostic
+#   CPUTEST.COM   - SuperSoft Diagnostics II
+#   8080PRE.COM   - Frank Cringle preliminary 8080 exerciser
+#   8080EXM.COM   - Frank Cringle full 8080 exerciser (long runtime)
