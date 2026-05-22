@@ -3,7 +3,7 @@
  * @brief OpenWeatherMap I/O port driver for Altair 8800 emulator on ESP32.
  *
  * The weather is fetched asynchronously by a background FreeRTOS task that
- * runs on startup (once the network is available) and again every 5
+ * runs on startup (once the network is available) and again every 20
  * minutes. The Altair side never blocks: it polls a status port, then
  * reads pre-parsed string fields from the request buffer (port 200).
  *

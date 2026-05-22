@@ -40,8 +40,9 @@
 
 #define WEATHER_TAG "WEATHER_IO"
 
-#define WEATHER_REFRESH_INTERVAL_MS (5 * 60 * 1000)
-#define WEATHER_RETRY_INTERVAL_MS   (60 * 1000)
+#define WEATHER_REFRESH_INTERVAL_MS       (20 * 60 * 1000)
+#define WEATHER_STARTUP_RETRY_INTERVAL_MS (2 * 60 * 1000)
+#define WEATHER_STARTUP_RETRY_WINDOW_MS   (10 * 60 * 1000)
 #define WEATHER_NETWORK_SETTLE_MS   5000
 #define WEATHER_HTTP_TIMEOUT_MS     15000
 #define WEATHER_HTTP_HOST           "api.openweathermap.org"
@@ -218,6 +219,8 @@ static void weather_task(void *arg)
 {
     (void)arg;
     bool network_ready = false;
+    bool startup_fetch_complete = false;
+    uint32_t startup_retry_elapsed_ms = 0;
 
     for (;;)
     {
@@ -253,8 +256,19 @@ static void weather_task(void *arg)
         }
 
         bool ok = weather_fetch_once();
-        TickType_t wait = pdMS_TO_TICKS(ok ? WEATHER_REFRESH_INTERVAL_MS
-                                          : WEATHER_RETRY_INTERVAL_MS);
+        uint32_t wait_ms = WEATHER_REFRESH_INTERVAL_MS;
+        if (ok)
+        {
+            startup_fetch_complete = true;
+        }
+        else if (!startup_fetch_complete &&
+                 startup_retry_elapsed_ms < WEATHER_STARTUP_RETRY_WINDOW_MS)
+        {
+            wait_ms = WEATHER_STARTUP_RETRY_INTERVAL_MS;
+            startup_retry_elapsed_ms += WEATHER_STARTUP_RETRY_INTERVAL_MS;
+        }
+
+        TickType_t wait = pdMS_TO_TICKS(wait_ms);
         ulTaskNotifyTake(pdTRUE, wait);
     }
 }
@@ -387,6 +401,7 @@ static bool weather_fetch_once(void)
             s_state->err[0] = '\0';
             xSemaphoreGive(s_mutex);
         }
+        ESP_LOGI(WEATHER_TAG, "OpenWeatherMap data downloaded successfully");
         ok = true;
     }
     else
