@@ -59,20 +59,10 @@ bool websocket_console_has_clients(void);
 void websocket_console_enqueue_output(uint8_t value);
 
 /**
- * @brief Try to dequeue a byte from WebSocket input
+ * @brief Clear the WebSocket TX queue
  *
- * Called from the emulator (Core 1) to receive terminal input.
- * Non-blocking. Emulator loop routes to emulator or monitor based on CPU state.
- *
- * @param value Pointer to store the received byte
- * @return true if a byte was available, false if queue empty
- */
-bool websocket_console_try_dequeue_input(uint8_t* value);
-
-/**
- * @brief Clear all console queues
- *
- * Removes all pending data from TX and RX queues.
+ * Removes all pending outbound data. Input is owned by the shared
+ * terminal_input queue and is not affected.
  */
 void websocket_console_clear_queues(void);
 

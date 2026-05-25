@@ -9,6 +9,7 @@
 
 #include "websocket_console.h"
 #include "websocket_server.h"
+#include "terminal_input.h"
 
 #include <string.h>
 
@@ -22,8 +23,7 @@
 
 static const char* TAG = "WS_Console";
 
-// Queue depths - sized for burst terminal I/O (e.g., screen clears, listings)
-#define WS_RX_QUEUE_DEPTH   128    // Input from WebSocket client
+// Queue depth - sized for burst terminal output (e.g., screen clears, listings)
 #define WS_TX_QUEUE_DEPTH   4096   // Output to WebSocket client - large for fast output
 
 // Maximum bytes to batch in a single WebSocket send
@@ -41,8 +41,9 @@ static const char* TAG = "WS_Console";
 #define WS_TX_TASK_PRIORITY 11     // Keep below esp_timer (22)
 #define WS_TX_TASK_CORE     0      // Pin to Core 0 to avoid emulator core
 
-// FreeRTOS queues for cross-core communication
-static QueueHandle_t s_rx_queue = NULL;  // WebSocket -> Emulator
+// FreeRTOS queue for emulator -> WebSocket output (input is routed through the
+// shared terminal_input queue so BLE keyboard and WebSocket clients share a
+// single consumer in the emulator loop).
 static QueueHandle_t s_tx_queue = NULL;  // Emulator -> WebSocket
 
 // Semaphore to wake TX task
@@ -71,19 +72,6 @@ static void clear_tx_queue(void)
     if (s_tx_queue) {
         uint8_t discard;
         while (xQueueReceive(s_tx_queue, &discard, 0) == pdTRUE) {
-            // Drain queue
-        }
-    }
-}
-
-/**
- * @brief Clear the RX queue
- */
-static void clear_rx_queue(void)
-{
-    if (s_rx_queue) {
-        uint8_t discard;
-        while (xQueueReceive(s_rx_queue, &discard, 0) == pdTRUE) {
             // Drain queue
         }
     }
@@ -182,16 +170,11 @@ void websocket_console_init(void)
         return;
     }
 
-    // Create queues
-    s_rx_queue = xQueueCreate(WS_RX_QUEUE_DEPTH, sizeof(uint8_t));
+    // Create TX queue
     s_tx_queue = xQueueCreate(WS_TX_QUEUE_DEPTH, sizeof(uint8_t));
 
-    if (!s_rx_queue || !s_tx_queue) {
-        ESP_LOGE(TAG, "Failed to create queues");
-        if (s_rx_queue) vQueueDelete(s_rx_queue);
-        if (s_tx_queue) vQueueDelete(s_tx_queue);
-        s_rx_queue = NULL;
-        s_tx_queue = NULL;
+    if (!s_tx_queue) {
+        ESP_LOGE(TAG, "Failed to create TX queue");
         return;
     }
 
@@ -199,9 +182,7 @@ void websocket_console_init(void)
     s_tx_sem = xSemaphoreCreateBinary();
     if (!s_tx_sem) {
         ESP_LOGE(TAG, "Failed to create TX semaphore");
-        vQueueDelete(s_rx_queue);
         vQueueDelete(s_tx_queue);
-        s_rx_queue = NULL;
         s_tx_queue = NULL;
         return;
     }
@@ -225,10 +206,8 @@ void websocket_console_init(void)
                  (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
                  (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         vSemaphoreDelete(s_tx_sem);
-        vQueueDelete(s_rx_queue);
         vQueueDelete(s_tx_queue);
         s_tx_sem = NULL;
-        s_rx_queue = NULL;
         s_tx_queue = NULL;
         return;
     }
@@ -246,11 +225,9 @@ void websocket_console_init(void)
         ESP_LOGE(TAG, "Failed to create TX timer: %s", esp_err_to_name(err));
         vTaskDelete(s_tx_task);
         vSemaphoreDelete(s_tx_sem);
-        vQueueDelete(s_rx_queue);
         vQueueDelete(s_tx_queue);
         s_tx_task = NULL;
         s_tx_sem = NULL;
-        s_rx_queue = NULL;
         s_tx_queue = NULL;
         return;
     }
@@ -269,19 +246,17 @@ void websocket_console_init(void)
         esp_timer_delete(s_tx_timer);
         vTaskDelete(s_tx_task);
         vSemaphoreDelete(s_tx_sem);
-        vQueueDelete(s_rx_queue);
         vQueueDelete(s_tx_queue);
         s_tx_timer = NULL;
         s_tx_task = NULL;
         s_tx_sem = NULL;
-        s_rx_queue = NULL;
         s_tx_queue = NULL;
         return;
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "Console initialized (RX=%d, TX=%d, timer=%dms, task_prio=%d)",
-             WS_RX_QUEUE_DEPTH, WS_TX_QUEUE_DEPTH, WS_TX_TIMER_INTERVAL_US / 1000,
+    ESP_LOGI(TAG, "Console initialized (TX=%d, timer=%dms, task_prio=%d)",
+             WS_TX_QUEUE_DEPTH, WS_TX_TIMER_INTERVAL_US / 1000,
              WS_TX_TASK_PRIORITY);
 }
 
@@ -367,33 +342,27 @@ void websocket_console_enqueue_output(uint8_t value)
     (void)queued;
 }
 
-bool websocket_console_try_dequeue_input(uint8_t* value)
-{
-    if (!s_initialized || !s_rx_queue || !value) {
-        return false;
-    }
-
-    return xQueueReceive(s_rx_queue, value, 0) == pdTRUE;
-}
-
 void websocket_console_clear_queues(void)
 {
+    // Only the TX queue is owned by this module; input is queued into the
+    // shared terminal_input queue and must not be flushed here (doing so
+    // would drop bytes typed on the BLE keyboard).
     clear_tx_queue();
-    clear_rx_queue();
 }
 
 /**
  * @brief Handle incoming WebSocket data (called from WebSocket server)
  *
  * This function is called by the WebSocket server when data is received
- * from a client. It queues the data for the emulator to process on Core 1.
+ * from a client. Bytes are pushed into the shared terminal_input queue so
+ * the emulator on Core 1 sees them alongside BLE keyboard input.
  *
  * @param data Pointer to received data
  * @param len Length of received data
  */
 void websocket_console_handle_rx(const uint8_t* data, size_t len)
 {
-    if (!s_initialized || !s_rx_queue || !data || len == 0) {
+    if (!s_initialized || !data || len == 0) {
         return;
     }
 
@@ -405,13 +374,7 @@ void websocket_console_handle_rx(const uint8_t* data, size_t len)
             ch = '\r';
         }
 
-        // Queue to RX queue - emulator loop on Core 1 will route based on CPU state
-        if (xQueueSend(s_rx_queue, &ch, 0) != pdTRUE) {
-            // Queue full - drop oldest and try again
-            uint8_t discard;
-            xQueueReceive(s_rx_queue, &discard, 0);
-            xQueueSend(s_rx_queue, &ch, 0);
-        }
+        terminal_input_enqueue(ch);
     }
 }
 
@@ -429,6 +392,7 @@ void websocket_console_on_connect(void)
  */
 void websocket_console_on_disconnect(void)
 {
-    // Clear queues when client disconnects
+    // Drain any stale outbound data; inbound bytes are owned by the shared
+    // terminal_input queue and are intentionally left alone.
     websocket_console_clear_queues();
 }

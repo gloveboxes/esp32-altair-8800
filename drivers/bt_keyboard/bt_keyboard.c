@@ -1,4 +1,5 @@
 #include "bt_keyboard.h"
+#include "terminal_input.h"
 
 #include "sdkconfig.h"
 
@@ -29,18 +30,19 @@
 #define ASCII_MASK_7BIT 0x7F
 #define CTRL_KEY(ch) ((ch) & 0x1F)
 
-#define BT_KEYBOARD_INPUT_QUEUE_DEPTH 64
 #define BT_KEYBOARD_SCAN_SECONDS 8
 #define BT_KEYBOARD_TASK_STACK 4096  // observed HWM ~2.5 KB
 #define BT_KEYBOARD_TASK_PRIORITY 4
 #define BT_KEYBOARD_TASK_CORE 0
 #define BT_KEYBOARD_OPEN_TIMEOUT_US (15LL * 1000LL * 1000LL)
-#define BT_KEYBOARD_RECONNECT_SCAN_MIN_US (30LL * 1000LL * 1000LL)
-#define BT_KEYBOARD_RECONNECT_SCAN_MAX_US (60LL * 1000LL * 1000LL)
+// Reconnect cadence after the keyboard goes idle. Sequence is 5s, 10s, 20s,
+// 20s, ... so the user normally waits well under 30s for the BLE link to come
+// back. The backoff is reset on a successful open, on an explicit user
+// pair/disconnect request, and on every disconnect (ESP_HIDH_CLOSE_EVENT).
+#define BT_KEYBOARD_RECONNECT_SCAN_MIN_US (5LL * 1000LL * 1000LL)
+#define BT_KEYBOARD_RECONNECT_SCAN_MAX_US (20LL * 1000LL * 1000LL)
 
 static const char *TAG = "BT_Keyboard";
-
-static QueueHandle_t s_input_queue = NULL;
 
 #if CONFIG_BT_ENABLED && CONFIG_BT_BLUEDROID_ENABLED && CONFIG_BT_BLE_ENABLED
 static volatile bool s_initialized = false;
@@ -149,15 +151,7 @@ static const uint8_t s_keytable_us_shift[] = {
 
 static void enqueue_input(uint8_t value)
 {
-    if (s_input_queue == NULL) return;
-
-    uint8_t ascii = (uint8_t)(value & ASCII_MASK_7BIT);
-    if (xQueueSend(s_input_queue, &ascii, 0) != pdTRUE) {
-        uint8_t discard;
-        if (xQueueReceive(s_input_queue, &discard, 0) == pdTRUE) {
-            xQueueSend(s_input_queue, &ascii, 0);
-        }
-    }
+    terminal_input_enqueue((uint8_t)(value & ASCII_MASK_7BIT));
 }
 
 static void enqueue_sequence(const char *sequence)
@@ -609,14 +603,6 @@ static void bt_keyboard_task(void *pvParameters)
 
 bool bt_keyboard_init(void)
 {
-    if (s_input_queue == NULL) {
-        s_input_queue = xQueueCreate(BT_KEYBOARD_INPUT_QUEUE_DEPTH, sizeof(uint8_t));
-        if (s_input_queue == NULL) {
-            ESP_LOGE(TAG, "input queue alloc failed");
-            return false;
-        }
-    }
-
 #if CONFIG_BT_ENABLED && CONFIG_BT_BLUEDROID_ENABLED && CONFIG_BT_BLE_ENABLED
     if (s_initialized) return true;
 
@@ -631,12 +617,6 @@ bool bt_keyboard_init(void)
     ESP_LOGW(TAG, "Bluetooth keyboard disabled in sdkconfig");
     return false;
 #endif
-}
-
-bool bt_keyboard_try_dequeue_input(uint8_t *value)
-{
-    if (s_input_queue == NULL || value == NULL) return false;
-    return xQueueReceive(s_input_queue, value, 0) == pdTRUE;
 }
 
 void bt_keyboard_request_pairing(void)

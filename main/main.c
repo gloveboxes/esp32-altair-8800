@@ -76,6 +76,7 @@
 // CPU state and virtual monitor
 #include "cpu_state.h"
 #include "ansi_input.h"
+#include "terminal_input.h"
 #include "virtual_monitor.h"
 
 // ASCII mask for 7-bit terminal
@@ -139,18 +140,13 @@ static uint8_t terminal_postprocess(uint8_t ch)
 
 static bool terminal_read_raw(uint8_t *ch)
 {
-    // Input priority is WebSocket client, then BLE keyboard, then USB serial.
-    if (wifi_setup_websocket_enabled() && websocket_console_try_dequeue_input(ch))
+    // BLE keyboard and WebSocket clients both feed the shared terminal_input
+    // queue; USB Serial JTAG is read directly from its driver buffer.
+    if (terminal_input_try_dequeue(ch))
     {
         return true;
     }
 
-    if (bt_keyboard_try_dequeue_input(ch))
-    {
-        return true;
-    }
-
-    // Fall back to USB serial if neither higher-priority source has input.
     return usb_serial_jtag_read_bytes(ch, 1, 0) > 0;
 }
 
@@ -508,8 +504,8 @@ static void emulator_task(void *pvParameters)
                 break;
             }
 #endif
-            // Reuse terminal_read() so the monitor sees the same WS->BT->USB
-            // priority and ANSI/monitor-toggle handling as the running CPU.
+            // Reuse terminal_read() so the monitor sees the same shared-input
+            // and ANSI/monitor-toggle handling as the running CPU.
             // terminal_postprocess() converts the monitor control byte into a
             // mode toggle and returns 0, so any non-zero byte is monitor input.
             uint8_t ch = terminal_read();
@@ -580,6 +576,10 @@ void app_main(void)
     // Initialize configuration (NVS storage)
     printf("Initializing configuration...\n");
     altair_config_init();
+
+    // Shared terminal input queue. Must exist before any producer (BLE
+    // keyboard, WebSocket server) is started.
+    terminal_input_init();
 
 #ifdef SD_CARD_SUPPORT
     // Mount SD card BEFORE the LCD framebuffer is allocated. The SDMMC

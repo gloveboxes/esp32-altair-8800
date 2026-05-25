@@ -3,6 +3,7 @@ set(app_sources
     "cpu_state.c"
     "main.c"
     "ansi_input.c"
+    "terminal_input.c"
     "config.c"
     "network_time.c"
     "time_setup.c"

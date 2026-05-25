@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 bool bt_keyboard_init(void);
-bool bt_keyboard_try_dequeue_input(uint8_t *value);
 void bt_keyboard_request_pairing(void);
 void bt_keyboard_request_disconnect(void);
 void bt_keyboard_request_clear_bonds(void);
