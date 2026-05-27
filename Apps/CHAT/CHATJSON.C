@@ -4,6 +4,7 @@
  * ============================================================
  */
 
+#include "stdio.h"
 #include "chatjson.h"
 
 /* String functions - BDS C style */

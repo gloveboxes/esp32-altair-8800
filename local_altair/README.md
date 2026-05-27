@@ -49,6 +49,6 @@ Press `Ctrl-]` to exit the runner and restore the terminal.
 
 ## OpenAI chat port
 
-If libcurl is installed and `OPENAI_API_KEY` is set in the environment, the
+If libcurl is installed and `CHAT_OPENAI_KEY` is set in `altair_env.txt`, the
 chat port (120-124) will be enabled. Without libcurl the chat port returns an
 error string.

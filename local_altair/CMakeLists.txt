@@ -19,6 +19,8 @@ add_executable(altair-local
     PortDrivers/host_files_io.c
     PortDrivers/time_io.c
     PortDrivers/utility_io.c
+    PortDrivers/weather_io.c
+    ${CMAKE_CURRENT_LIST_DIR}/../port_drivers/json_scan.c
     ${ALTAIR_DIR}/universal_88dcdd.c
     ${ALTAIR_DIR}/intel8080.c
     ${ALTAIR_DIR}/memory.c
@@ -28,6 +30,7 @@ target_include_directories(altair-local PRIVATE
     .
     ./PortDrivers
     ${ALTAIR_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../port_drivers
 )
 
 target_compile_definitions(altair-local PRIVATE

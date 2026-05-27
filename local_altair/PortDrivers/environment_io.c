@@ -21,7 +21,7 @@
 
 #define ENV_MAX_ENTRIES 128
 #define ENV_KEY_SIZE 17
-#define ENV_VALUE_SIZE 128
+#define ENV_VALUE_SIZE 256
 #define ENV_REQUEST_SIZE 512
 #define ENV_ERROR_SIZE 128
 #define ENV_PATH_SIZE 1024
@@ -166,6 +166,20 @@ uint8_t environment_input(uint8_t port)
         return (uint8_t)s_status;
     }
     return 0;
+}
+
+bool environment_io_get(const char *key, char *value, size_t value_length)
+{
+    char normalized[ENV_KEY_SIZE];
+    int rc;
+
+    if (!s_initialized)
+    {
+        environment_io_init(NULL);
+    }
+    env_normalize_key(key, normalized, ENV_KEY_SIZE);
+    rc = env_get_value(normalized, value, value_length);
+    return rc == ENV_STATUS_OK;
 }
 
 static void env_reset_request(void)

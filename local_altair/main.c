@@ -5,6 +5,7 @@
 #include "PortDrivers/environment_io.h"
 #include "PortDrivers/host_files_io.h"
 #include "PortDrivers/time_io.h"
+#include "PortDrivers/weather_io.h"
 #include "ansi_input.h"
 #include "host_platform.h"
 #include "io_ports.h"
@@ -169,6 +170,7 @@ int main(int argc, char **argv)
     host_files_init(apps_root_path);
     environment_io_init(env_file_path);
     chat_io_init();
+    weather_io_init();
     controller = host_disk_controller();
 
     memset(memory, 0x00, 64 * 1024);

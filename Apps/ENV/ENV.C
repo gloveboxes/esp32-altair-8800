@@ -19,7 +19,7 @@
 
 #define MAXVARS  32
 #define E_KEYSZ  17
-#define E_VALSZ  128
+#define E_VALSZ  256
 #define LBUFSZ   144
 
 int e_init();

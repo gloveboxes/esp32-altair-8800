@@ -1,13 +1,19 @@
 /*
  * Host-side implementation of chat_io.h for local_altair.
  *
- * Uses libcurl for the streaming OpenAI chat completions request and a
+ * Uses libcurl for the streaming chat completions request and a
  * background pthread so chat_input() can return characters as they arrive.
  *
- * API key is read from the OPENAI_API_KEY environment variable.
+ * Configuration is read from the env store (altair_env.txt):
+ *   CHAT_OPENAI_KEY  - Bearer token for OpenAI (and any compatible endpoint
+ *                      that requires auth).
+ *   CHAT_PROVIDER    - "openai" (default) or "compatible".
+ *   CHAT_ENDPOINT    - Full URL used when CHAT_PROVIDER=compatible,
+ *                      e.g. http://192.168.1.20:11434/v1/chat/completions
  */
 
 #include "chat_io.h"
+#include "environment_io.h"
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -23,7 +29,12 @@
 #define CHAT_RING_SIZE 16384
 #define CHAT_SSE_LINE_MAX 4096
 
+#define CHAT_DEFAULT_OPENAI_URL "https://api.openai.com/v1/chat/completions"
+
 static char chat_api_key[256];
+static char chat_provider[32];
+static char chat_endpoint[512];
+static char chat_url[512];
 
 typedef struct
 {
@@ -169,35 +180,146 @@ static int hex_nibble(char ch)
     return -1;
 }
 
+/* Map a Unicode codepoint to a printable 7-bit ASCII replacement so the
+ * Altair VT100 (which only handles 7-bit ASCII) does not see UTF-8
+ * continuation bytes leak through as stray characters (e.g. the curly
+ * apostrophe U+2019 0xE2 0x80 0x99 surfacing as 'b'). Returns 0 if no
+ * sensible replacement exists, in which case the caller should drop the
+ * codepoint.
+ *
+ * Mirrors chat_cp_to_ascii() in port_drivers/chat_io.c. */
+static char cp_to_ascii(uint32_t cp)
+{
+    if (cp < 0x80) return (char)cp;
+    switch (cp)
+    {
+        case 0x00A0: return ' ';            /* NBSP */
+        case 0x00A9: return 'C';            /* (C) */
+        case 0x00AE: return 'R';            /* (R) */
+        case 0x00B0: return ' ';            /* degree */
+        case 0x00B7: return '.';            /* middle dot */
+        case 0x2010: case 0x2011:
+        case 0x2012: case 0x2013:
+        case 0x2014: case 0x2015: return '-';   /* hyphen / en / em dash */
+        case 0x2018: case 0x2019:
+        case 0x201A: case 0x2032: return '\'';  /* single quotes / prime */
+        case 0x201C: case 0x201D:
+        case 0x201E: case 0x2033: return '"';   /* double quotes */
+        case 0x2022: case 0x2023:
+        case 0x25E6: case 0x2043: return '*';   /* bullets */
+        case 0x2026: return '.';                /* ellipsis -> '.' */
+        case 0x2192: return '>';                /* right arrow */
+        case 0x2190: return '<';                /* left arrow */
+        case 0x00D7: return 'x';                /* multiply */
+        default: return 0;
+    }
+}
+
+static void emit_codepoint(uint32_t generation, uint32_t cp)
+{
+    if (cp < 0x80)
+    {
+        ring_put(generation, (uint8_t)cp);
+        return;
+    }
+    if (cp == 0x2026)
+    {
+        /* ellipsis: expand to "..." */
+        ring_put(generation, '.');
+        ring_put(generation, '.');
+        ring_put(generation, '.');
+        return;
+    }
+    char repl = cp_to_ascii(cp);
+    if (repl)
+    {
+        ring_put(generation, (uint8_t)repl);
+    }
+    /* else: silently drop unknown codepoint */
+}
+
 static void emit_json_string(uint32_t generation, const char* ptr)
 {
     while (*ptr && *ptr != '"')
     {
-        uint8_t out = (uint8_t)*ptr++;
-        if (out == '\\' && *ptr)
+        uint8_t b = (uint8_t)*ptr++;
+        if (b == '\\' && *ptr)
         {
             char esc = *ptr++;
             switch (esc)
             {
-                case 'n': out = '\n'; break;
-                case 'r': out = '\r'; break;
-                case 't': out = '\t'; break;
-                case '"': out = '"'; break;
-                case '\\': out = '\\'; break;
+                case 'n': ring_put(generation, '\n'); break;
+                case 'r': ring_put(generation, '\r'); break;
+                case 't': ring_put(generation, '\t'); break;
+                case '"': ring_put(generation, '"'); break;
+                case '\\': ring_put(generation, '\\'); break;
+                case '/': ring_put(generation, '/'); break;
+                case 'b': ring_put(generation, '\b'); break;
+                case 'f': ring_put(generation, '\f'); break;
                 case 'u':
-                    if (hex_nibble(ptr[0]) >= 0 && hex_nibble(ptr[1]) >= 0 &&
-                        hex_nibble(ptr[2]) >= 0 && hex_nibble(ptr[3]) >= 0)
+                {
+                    int n0 = hex_nibble(ptr[0]);
+                    int n1 = (n0 >= 0) ? hex_nibble(ptr[1]) : -1;
+                    int n2 = (n1 >= 0) ? hex_nibble(ptr[2]) : -1;
+                    int n3 = (n2 >= 0) ? hex_nibble(ptr[3]) : -1;
+                    if (n3 >= 0)
                     {
+                        uint32_t cp = (uint32_t)((n0 << 12) | (n1 << 8) | (n2 << 4) | n3);
                         ptr += 4;
+                        /* surrogate pair */
+                        if (cp >= 0xD800 && cp <= 0xDBFF && ptr[0] == '\\' && ptr[1] == 'u')
+                        {
+                            int m0 = hex_nibble(ptr[2]);
+                            int m1 = (m0 >= 0) ? hex_nibble(ptr[3]) : -1;
+                            int m2 = (m1 >= 0) ? hex_nibble(ptr[4]) : -1;
+                            int m3 = (m2 >= 0) ? hex_nibble(ptr[5]) : -1;
+                            if (m3 >= 0)
+                            {
+                                uint32_t lo = (uint32_t)((m0 << 12) | (m1 << 8) | (m2 << 4) | m3);
+                                if (lo >= 0xDC00 && lo <= 0xDFFF)
+                                {
+                                    cp = 0x10000u + (((cp - 0xD800u) << 10) | (lo - 0xDC00u));
+                                    ptr += 6;
+                                }
+                            }
+                        }
+                        emit_codepoint(generation, cp);
                     }
-                    out = '?';
                     break;
+                }
                 default:
-                    out = (uint8_t)esc;
+                    ring_put(generation, (uint8_t)esc & 0x7f);
                     break;
             }
+            continue;
         }
-        ring_put(generation, out & 0x7f);
+
+        if (b < 0x80)
+        {
+            ring_put(generation, b);
+            continue;
+        }
+
+        /* UTF-8 lead byte: decode codepoint, then map to ASCII. */
+        uint32_t cp = 0;
+        int extra = 0;
+        if ((b & 0xE0) == 0xC0) { cp = b & 0x1F; extra = 1; }
+        else if ((b & 0xF0) == 0xE0) { cp = b & 0x0F; extra = 2; }
+        else if ((b & 0xF8) == 0xF0) { cp = b & 0x07; extra = 3; }
+        else { continue; /* stray continuation byte */ }
+
+        bool ok = true;
+        for (int i = 0; i < extra; ++i)
+        {
+            uint8_t cb = (uint8_t)*ptr;
+            if (!cb || (cb & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (cb & 0x3F);
+            ptr++;
+        }
+        if (ok)
+        {
+            emit_codepoint(generation, cp);
+        }
     }
 }
 
@@ -291,16 +413,24 @@ static void* chat_worker(void* arg)
     }
 
     char auth[300];
-    snprintf(auth, sizeof(auth), "Authorization: Bearer %s", chat_api_key);
+    bool have_key = (chat_api_key[0] != '\0');
+    if (have_key)
+    {
+        snprintf(auth, sizeof(auth), "Authorization: Bearer %s", chat_api_key);
+    }
 
     struct curl_slist* headers = NULL;
-    if (!append_header(&headers, "Content-Type: application/json") ||
-        !append_header(&headers, "Accept: text/event-stream") ||
-        !append_header(&headers, auth))
+    bool headers_ok = append_header(&headers, "Content-Type: application/json") &&
+                      append_header(&headers, "Accept: text/event-stream");
+    if (headers_ok && have_key)
+    {
+        headers_ok = append_header(&headers, auth);
+    }
+    if (!headers_ok)
     {
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
-        ring_put_str(generation, "OpenAI out of memory\n");
+        ring_put_str(generation, "Chat out of memory\n");
         ring_set_eof(generation);
         free(request_body);
         return NULL;
@@ -311,7 +441,7 @@ static void* chat_worker(void* arg)
     parser.generation = generation;
     parser.overflow = false;
 
-    curl_easy_setopt(curl, CURLOPT_URL, "https://api.openai.com/v1/chat/completions");
+    curl_easy_setopt(curl, CURLOPT_URL, chat_url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(request_body));
@@ -328,13 +458,13 @@ static void* chat_worker(void* arg)
     if (res != CURLE_OK)
     {
         char msg[160];
-        snprintf(msg, sizeof(msg), "OpenAI request failed: %s\n", curl_easy_strerror(res));
+        snprintf(msg, sizeof(msg), "Chat request failed: %s\n", curl_easy_strerror(res));
         ring_put_str(generation, msg);
     }
     else if (http_code != 200)
     {
         char msg[64];
-        snprintf(msg, sizeof(msg), "OpenAI HTTP %ld\n", http_code);
+        snprintf(msg, sizeof(msg), "Chat HTTP %ld\n", http_code);
         ring_put_str(generation, msg);
     }
 
@@ -351,17 +481,45 @@ void chat_io_init(void)
 {
     ring_init();
     memset(&port_state, 0, sizeof(port_state));
-    const char* env = getenv("OPENAI_API_KEY");
-    if (env != NULL && env[0] != '\0')
+
+    /* Read CHAT_OPENAI_KEY (matches ESP32 firmware). */
+    if (!(environment_io_get("CHAT_OPENAI_KEY", chat_api_key, sizeof(chat_api_key)) &&
+          chat_api_key[0] != '\0'))
     {
-        strncpy(chat_api_key, env, sizeof(chat_api_key) - 1);
-        chat_api_key[sizeof(chat_api_key) - 1] = '\0';
-        printf("[Chat] OPENAI_API_KEY captured (host build).\n");
+        chat_api_key[0] = '\0';
+    }
+
+    /* Read CHAT_PROVIDER (default: openai). */
+    if (!(environment_io_get("CHAT_PROVIDER", chat_provider, sizeof(chat_provider)) &&
+          chat_provider[0] != '\0'))
+    {
+        strncpy(chat_provider, "openai", sizeof(chat_provider) - 1);
+        chat_provider[sizeof(chat_provider) - 1] = '\0';
+    }
+
+    /* Read CHAT_ENDPOINT (only used when provider=compatible). */
+    if (!(environment_io_get("CHAT_ENDPOINT", chat_endpoint, sizeof(chat_endpoint)) &&
+          chat_endpoint[0] != '\0'))
+    {
+        chat_endpoint[0] = '\0';
+    }
+
+    /* Resolve the effective URL. */
+    if (strcmp(chat_provider, "compatible") == 0 && chat_endpoint[0] != '\0')
+    {
+        strncpy(chat_url, chat_endpoint, sizeof(chat_url) - 1);
+        chat_url[sizeof(chat_url) - 1] = '\0';
     }
     else
     {
-        printf("[Chat] OPENAI_API_KEY not set; chat port will return an error.\n");
+        strncpy(chat_url, CHAT_DEFAULT_OPENAI_URL, sizeof(chat_url) - 1);
+        chat_url[sizeof(chat_url) - 1] = '\0';
     }
+
+    printf("[Chat] provider=%s url=%s key=%s\n",
+           chat_provider, chat_url,
+           chat_api_key[0] ? "set" : "(none)");
+
 #ifdef HAVE_LIBCURL
     curl_global_init(CURL_GLOBAL_DEFAULT);
 #else
@@ -371,8 +529,8 @@ void chat_io_init(void)
 
 void chat_io_prompt_api_key(void)
 {
-    /* Host build reads the key from OPENAI_API_KEY in chat_io_init(); the
-     * 5-second prompt is Pico-only. */
+    /* Host build reads config from env at chat_io_init(); the 5-second
+     * prompt is Pico-only. */
 }
 
 void chat_client_poll(void)
@@ -419,9 +577,9 @@ static void trigger_request(void)
         return;
     }
 
-    if (chat_api_key[0] == '\0')
+    if (chat_api_key[0] == '\0' && strcmp(chat_provider, "compatible") != 0)
     {
-        ring_put_str(generation, "OpenAI API key not configured\n");
+        ring_put_str(generation, "Chat: CHAT_OPENAI_KEY not configured\n");
         ring_set_eof(generation);
         return;
     }

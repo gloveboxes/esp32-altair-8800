@@ -9,7 +9,7 @@
 #include "stdio.h"
 
 #define E_KEYSZ  17
-#define E_VALSZ  128
+#define E_VALSZ  256
 
 #define E_OK     0
 #define E_EOPEN  -1

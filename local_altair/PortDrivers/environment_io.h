@@ -17,6 +17,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -32,6 +33,14 @@ extern "C"
  * times; only the first call takes effect.
  */
 void environment_io_init(const char *file_path);
+
+/**
+ * Look up an environment variable from the in-memory snapshot. key is
+ * matched case-insensitively (stored uppercase). Returns true and fills
+ * value/value_length if found; otherwise returns false and writes "" if
+ * value/value_length is non-NULL.
+ */
+bool environment_io_get(const char *key, char *value, size_t value_length);
 
 size_t environment_output(int port, uint8_t data, char *buffer, size_t buffer_length);
 uint8_t environment_input(uint8_t port);

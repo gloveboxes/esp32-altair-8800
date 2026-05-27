@@ -49,15 +49,10 @@ int g_cur;
 char g_req[REQ_LEN];
 char g_resp[AST_LEN];
 
-/* Message storage pools */
-#define MAX_AST ((MAX_MSG + 1) / 2)
-char g_umsg[MAX_MSG][USR_LEN];
-char g_amem[MAX_AST][AST_LEN];
-int g_uuse[MAX_MSG];
-int g_ause[MAX_AST];
+/* Message storage - dynamic per-message alloc, EDIT.C style.
+   g_mptr[i] owns the buffer for message i; freed when the
+   message is shifted out or history is cleared. */
 char *g_mptr[MAX_MSG];
-int g_umap[MAX_MSG];
-int g_amap[MAX_MSG];
 
 /* Function declarations */
 int ch_init();
@@ -69,13 +64,8 @@ int ch_show();
 int ch_clr();
 int ch_api();
 int ch_recv();
-int ch_copy();
 int ch_prn();
 int ch_line();
-int ch_gus();
-int ch_fus();
-int ch_gas();
-int ch_fas();
 int ch_lcfg();
 int ch_lenv();
 int ch_cfg();
@@ -89,6 +79,10 @@ int strlen();
 int strcpy();
 int strcat();
 int strcmp();
+
+/* Memory */
+char *alloc();
+int free();
 
 /* I/O port functions */
 int outp();
@@ -182,14 +176,6 @@ int ch_init()
     {
         g_types[i] = 0;
         g_mptr[i] = 0;
-        g_umap[i] = -1;
-        g_amap[i] = -1;
-        g_uuse[i] = 0;
-    }
-
-    for (i = 0; i < MAX_AST; i++)
-    {
-        g_ause[i] = 0;
     }
 
     return 0;
@@ -247,7 +233,7 @@ int ch_hlp()
     printf("  ENV CHAT_TEMPERATURE=0.7\r\n\r\n");
     printf("OpenAI example:\r\n");
     printf("  ENV CHAT_PROVIDER=openai\r\n");
-    printf("  ENV OPENAI_KEY=your-api-key\r\n");
+    printf("  ENV CHAT_OPENAI_KEY=your-api-key\r\n");
     printf("  ENV CHAT_MODEL=gpt-4o-mini\r\n\r\n");
     printf("CHAT.CFG is used as a fallback for model, max_tokens,\r\n");
     printf("and temperature. Missing ENV values are seeded on run.\r\n");
@@ -603,72 +589,46 @@ int ch_chat()
     return 0;
 }
 
-/* Add message to history */
+/* Add message to history. Allocates just enough memory for the
+   actual text length. Oldest message is freed and shifted out
+   when the history is full. */
 int ch_addm(type, text)
 int type;
 char *text;
 {
     int idx;
-    int limit;
-    int slot;
+    int len;
+    char *p;
     int i;
 
     if (g_mcnt >= MAX_MSG)
     {
-        /* Shift messages down */
-        /* printf("DEBUG: Shifting messages (full)\n"); */
-
-        if (g_types[0] == MSG_USR)
-            ch_fus(g_umap[0]);
-        else if (g_types[0] == MSG_AST)
-            ch_fas(g_amap[0]);
+        /* Shift messages down, freeing the oldest. */
+        if (g_mptr[0])
+            free(g_mptr[0]);
 
         for (i = 0; i < MAX_MSG - 1; i++)
         {
             g_types[i] = g_types[i + 1];
             g_mptr[i] = g_mptr[i + 1];
-            g_umap[i] = g_umap[i + 1];
-            g_amap[i] = g_amap[i + 1];
         }
         g_types[MAX_MSG - 1] = 0;
         g_mptr[MAX_MSG - 1] = 0;
-        g_umap[MAX_MSG - 1] = -1;
-        g_amap[MAX_MSG - 1] = -1;
         g_mcnt = MAX_MSG - 1;
     }
 
+    len = strlen(text);
+    p = alloc(len + 1);
+    if (p == 0)
+    {
+        printf("Out of memory adding message\n");
+        return -1;
+    }
+    strcpy(p, text);
+
     idx = g_mcnt;
     g_types[idx] = type;
-    g_mptr[idx] = 0;
-    g_umap[idx] = -1;
-    g_amap[idx] = -1;
-
-    if (type == MSG_AST)
-    {
-        limit = AST_LEN;
-        slot = ch_gas();
-        if (slot < 0)
-        {
-            printf("No assistant slots available\n");
-            return -1;
-        }
-        ch_copy(g_amem[slot], text, limit);
-        g_mptr[idx] = g_amem[slot];
-        g_amap[idx] = slot;
-    }
-    else
-    {
-        limit = USR_LEN;
-        slot = ch_gus();
-        if (slot < 0)
-        {
-            printf("No user slots available\n");
-            return -1;
-        }
-        ch_copy(g_umsg[slot], text, limit);
-        g_mptr[idx] = g_umsg[slot];
-        g_umap[idx] = slot;
-    }
+    g_mptr[idx] = p;
     g_mcnt++;
 
     return 0;
@@ -722,14 +682,10 @@ int ch_clr()
 
     for (i = 0; i < g_mcnt; i++)
     {
-        if (g_types[i] == MSG_USR)
-            ch_fus(g_umap[i]);
-        else if (g_types[i] == MSG_AST)
-            ch_fas(g_amap[i]);
-        g_types[i] = 0;
+        if (g_mptr[i])
+            free(g_mptr[i]);
         g_mptr[i] = 0;
-        g_umap[i] = -1;
-        g_amap[i] = -1;
+        g_types[i] = 0;
     }
     g_mcnt = 0;
     printf("\nMessage history cleared\n");
@@ -897,31 +853,8 @@ int echo;
 }
 
 /* Copy with length guard */
-int ch_copy(dst, src, max)
-char *dst;
-char *src;
-int max;
-{
-    int cnt;
-    char *d;
-    char *s;
-
-    if (max <= 0)
-        return 0;
-
-    d = dst;
-    s = src;
-    cnt = 0;
-
-    while (*s && cnt < max - 1)
-    {
-        *d++ = *s++;
-        cnt++;
-    }
-
-    *d = 0;
-    return cnt;
-}
+/* (ch_copy, ch_gus, ch_fus, ch_gas, ch_fas removed -
+   no longer needed with dynamic per-message alloc.) */
 
 /* Read one bounded console line. */
 int ch_line(buf, max)
@@ -975,54 +908,7 @@ int max;
 }
 
 /* Allocate user slot */
-int ch_gus()
-{
-    int i;
-
-    for (i = 0; i < MAX_MSG; i++)
-    {
-        if (g_uuse[i] == 0)
-        {
-            g_uuse[i] = 1;
-            return i;
-        }
-    }
-    return -1;
-}
-
-/* Free user slot */
-int ch_fus(slot)
-int slot;
-{
-    if (slot >= 0 && slot < MAX_MSG)
-        g_uuse[slot] = 0;
-    return 0;
-}
-
-/* Allocate assistant slot */
-int ch_gas()
-{
-    int i;
-
-    for (i = 0; i < MAX_AST; i++)
-    {
-        if (g_ause[i] == 0)
-        {
-            g_ause[i] = 1;
-            return i;
-        }
-    }
-    return -1;
-}
-
-/* Free assistant slot */
-int ch_fas(slot)
-int slot;
-{
-    if (slot >= 0 && slot < MAX_AST)
-        g_ause[slot] = 0;
-    return 0;
-}
+/* (slot helpers removed) */
 
 /* Print string without truncation */
 int ch_prn(text)

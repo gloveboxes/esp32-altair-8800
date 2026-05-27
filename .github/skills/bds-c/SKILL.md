@@ -75,6 +75,22 @@ For Altair/VT100 apps:
 - There is no `extern` keyword behavior like modern C. Multi-file external data layout must match exactly and all external variables used by a program must be declared in the source file containing `main`.
 - Do not place `#include` inside conditional compilation blocks; BDS C processes includes before conditionals.
 
+## STDIO.H Must Be The First Include In Every Source File
+
+BDS C externals work like FORTRAN COMMON: variables are matched by **offset across all linked source files**, not by name. `STDIO.H` declares `struct _header _base;` and `struct _header *_allocp;` as externals; `_allocp` is used internally by `alloc`/`free`, and `fopen` calls `alloc` to allocate its file buffer.
+
+If any `.c` file in a multi-file program does not include `stdio.h` first, that file's external area starts with different variables, shifting `_allocp` to a different offset. The linker silently produces a broken `.com` where `fopen` returns NULL and `alloc` corrupts memory.
+
+Rule (BDS C v1.6 manual, page 26 caveat 3 and page 84):
+
+- `#include "stdio.h"` MUST be the very first `#include` in EVERY `.c` file of the program, even if that file does not call any stdio function.
+- No data declarations may physically precede it.
+- The source file containing `main` must declare every external used anywhere in the program.
+
+Classic symptom: `fopen("somefile", "r")` returns NULL even though the file exists and CP/M `TYPE somefile` works (TYPE goes straight to BDOS and never touches `alloc`). The bug appears identically on host emulators and ESP32 because the broken `.com` binary is the same on every platform.
+
+When creating or editing any BDS C `.c` file, ensure line 1 (after the comment header) is `#include "stdio.h"`.
+
 ## Validation
 
 Run `scripts/check_bds_c.py` on each changed BDS C source/header file. The script strips comments and literals, then reports:

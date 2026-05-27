@@ -37,6 +37,7 @@
  * Timer 2: Ports 28/29 - Set high byte (28), low byte (29) and start
  */
 
+#include "stdio.h"
 #include "dxtimer.h"
 
 /* Timer port mappings */

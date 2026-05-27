@@ -5,11 +5,16 @@
 #include "PortDrivers/host_files_io.h"
 #include "PortDrivers/time_io.h"
 #include "PortDrivers/utility_io.h"
+#include "PortDrivers/weather_io.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define REQUEST_BUFFER_SIZE 128
+/* Must be large enough to hold the full ENV list response (all keys=values
+ * concatenated) and any chat/weather payload. Matches the ESP32 build in
+ * port_drivers/io_ports.c. A 128-byte buffer truncated long values such as
+ * CHAT_OPENAI_KEY in the ENV list output. */
+#define REQUEST_BUFFER_SIZE 2048
 
 typedef struct
 {
@@ -40,9 +45,11 @@ void io_port_out(uint8_t port, uint8_t data)
             request_unit.len = time_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
         case 45:
-        case 46:
         case 70:
             request_unit.len = utility_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
+            break;
+        case WEATHER_PORT_FIELD:
+            request_unit.len = weather_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
         case 60:
         case 61:
@@ -79,6 +86,8 @@ uint8_t io_port_in(uint8_t port)
             return host_files_in(port);
         case ENVIRONMENT_PORT_COMMAND:
             return environment_input(port);
+        case WEATHER_PORT_STATUS:
+            return weather_input(port);
         case CHAT_PORT_TRIGGER:
         case CHAT_PORT_STATUS:
         case CHAT_PORT_DATA:

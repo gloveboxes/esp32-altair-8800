@@ -1,3 +1,72 @@
+# CHAT.COM — Setup Guide
+
+`CHAT.COM` is a CP/M client for OpenAI Chat Completions and any compatible
+endpoint (Ollama, llama.cpp server, LM Studio, vLLM, etc.). It talks to the
+host through Intel 8080 I/O ports backed by libcurl on the desktop emulator
+and by the ESP-IDF HTTP client on the ESP32 firmware.
+
+All configuration is read from the Altair env store via the `ENV` app
+(set with `ENV NAME=value`) or, on the device, from the web config portal.
+Both sides share the NVS namespace `ENVIRONMENT` on the ESP32, and
+`local_altair/altair_env.txt` on the host emulator.
+
+## Required environment variables
+
+### ESP32 firmware (`port_drivers/chat_io.c`)
+
+| Variable | When | Purpose |
+|---|---|---|
+| `CHAT_PROVIDER`    | always | `openai` (uses `https://api.openai.com/v1/chat/completions`) or `compatible` (uses `CHAT_ENDPOINT`) |
+| `CHAT_ENDPOINT`    | `CHAT_PROVIDER=compatible` | Full URL, e.g. `http://192.168.1.20:11434/v1/chat/completions` |
+| `CHAT_OPENAI_KEY`  | `CHAT_PROVIDER=openai` (optional for `compatible`) | Bearer token sent in the `Authorization` header |
+
+### Host emulator (`local_altair/PortDrivers/host_chat_io.c`)
+
+The host emulator now honors the same `CHAT_PROVIDER` / `CHAT_ENDPOINT` /
+`CHAT_OPENAI_KEY` variables as the ESP32 firmware. The driver picks one URL
+at startup (logged as `[Chat] provider=... url=... key=...`). To change
+provider/endpoint, edit `local_altair/altair_env.txt` and relaunch
+`altair-local`.
+
+### Read by `CHAT.COM` itself (both platforms, via `e_get`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CHAT_MODEL`       | `gemma3:1b` | Model name passed to the API |
+| `CHAT_MAX_TOKENS`  | `1024`      | `max_tokens` in the request |
+| `CHAT_TEMPERATURE` | `0.7`       | Sampling temperature |
+
+These can also be set in `CHAT.CFG` on disk A:; env-store values override the
+config file when present.
+
+## Example: OpenAI
+
+Set inside CP/M:
+
+```text
+A>ENV CHAT_PROVIDER=openai
+A>ENV CHAT_OPENAI_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxx
+A>ENV CHAT_MODEL=gpt-4o-mini
+A>CHAT
+```
+
+The same `CHAT_OPENAI_KEY` name is used on both the ESP32 firmware and the
+host emulator (set it in `local_altair/altair_env.txt` for the host).
+
+## Example: Ollama on the LAN
+
+```text
+A>ENV CHAT_PROVIDER=compatible
+A>ENV CHAT_ENDPOINT=http://192.168.1.20:11434/v1/chat/completions
+A>ENV CHAT_MODEL=gemma3:1b
+A>CHAT
+```
+
+For the Ollama server itself to accept connections from the Altair and use a
+useful context window, configure it as below.
+
+---
+
 # Ollama Environment Configuration Guide
 
 This guide explains how to install Ollama on Linux and configure environment variables for the server (Systemd) to enable network access and a larger context window.

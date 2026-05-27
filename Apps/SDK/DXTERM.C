@@ -31,6 +31,7 @@
 
 /* Console and BDOS entry points */
 
+#include "stdio.h"
 #include "dxterm.h"
 
 /* x_numpr(n) - Print signed integer in decimal form. */
