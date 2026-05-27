@@ -55,10 +55,10 @@
 
 // Disk file paths on SD card (relative to mount point)
 // These will be prefixed with SDCARD_MOUNT_POINT ("/sdcard")
-#define DISK_A_PATH "/sdcard/Disks/cpm63k.dsk"
-#define DISK_B_PATH "/sdcard/Disks/bdsc-v1.60.dsk"
-#define DISK_C_PATH "/sdcard/Disks/escape-posix.dsk"
-#define DISK_D_PATH "/sdcard/Disks/blank.dsk"
+#define DISK_A_PATH "/sdcard/cpm63k.dsk"
+#define DISK_B_PATH "/sdcard/bdsc-v1.60.dsk"
+#define DISK_C_PATH "/sdcard/escape-posix.dsk"
+#define DISK_D_PATH "/sdcard/blank.dsk"
 
 typedef struct
 {

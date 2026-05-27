@@ -88,5 +88,5 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
 )
 
 if(CONFIG_ALTAIR_STORAGE_INTERNAL_FLASH)
-    fatfs_create_spiflash_image(storage ../flash_storage)
+    fatfs_create_spiflash_image(storage ../disks)
 endif()

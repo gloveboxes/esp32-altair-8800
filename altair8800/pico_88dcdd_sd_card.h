@@ -50,10 +50,10 @@
 #define DRIVE_D 3
 
 // Disk file paths on SD card
-#define DISK_A_PATH "Disks/cpm63k.dsk"
-#define DISK_B_PATH "Disks/bdsc-v1.60.dsk"
-#define DISK_C_PATH "Disks/escape-posix.dsk"
-#define DISK_D_PATH "Disks/blank.dsk"
+#define DISK_A_PATH "cpm63k.dsk"
+#define DISK_B_PATH "bdsc-v1.60.dsk"
+#define DISK_C_PATH "escape-posix.dsk"
+#define DISK_D_PATH "blank.dsk"
 
 typedef struct
 {
