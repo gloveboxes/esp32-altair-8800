@@ -1,0 +1,3 @@
+Ref,Qty,Part,Notes
+J1,1,1x11 2.54mm female socket/header,Fit on underside if snapping onto Altair male header; verify pin 1 orientation
+U1,1,Seeed Studio XIAO ESP32-S3,Mount using 2x7 2.54mm headers or sockets; keep USB end accessible
