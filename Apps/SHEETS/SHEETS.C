@@ -37,15 +37,15 @@
 #define MAXROW 99
 #define CWID   10
 #define VCOLS  7
-#define VROWS  20
+#define VROWS  26
 #define GUTW   4
 
 #define TITR   1
 #define HDRR   2
 #define DATR   3
-#define EDR    23
-#define STR    23
-#define HLPR   24
+#define EDR    29
+#define STR    29
+#define HLPR   30
 #define SCRW   80
 
 #define ESC    27
