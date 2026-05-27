@@ -37,17 +37,8 @@
 #include "memory.h"
 #include "esp_heap_caps.h"
 
-// SD Card support
-#define SD_CARD_SUPPORT
-#ifdef SD_CARD_SUPPORT
 #include "sdcard_esp32.h"
 #include "esp32_88dcdd_sd_card.h"
-#else
-#include "pico_88dcdd_flash.h"
-// Disk images (embedded in flash)
-#include "cpm63k_disk.h"
-#include "bdsc_v1_60_disk.h"
-#endif
 
 // Front panel display
 #include "altair_panel.h"
@@ -346,7 +337,6 @@ static void emulator_task(void *pvParameters)
     // Initialize SD card and disk system on Core 1 (same core as emulator)
     // This ensures synchronous disk I/O doesn't cross core boundaries
     //-------------------------------------------------------------------------
-#ifdef SD_CARD_SUPPORT
     // Initialize SD card
     printf("Initializing SD card on Core 1...\n");
     if (!sdcard_esp32_init())
@@ -416,40 +406,6 @@ static void emulator_task(void *pvParameters)
         .sector = (port_in)esp32_sd_disk_sector,
         .write = (port_out)esp32_sd_disk_write,
         .read = (port_in)esp32_sd_disk_read};
-#else
-    // Initialize disk controller (embedded flash disks)
-    printf("Initializing disk controller...\n");
-    pico_disk_init();
-
-    // Load CPM disk image into drive 0 (DISK_A)
-    printf("Loading DISK_A: cpm63k.dsk (embedded)\n");
-    if (!pico_disk_load(0, cpm63k_dsk, cpm63k_dsk_len))
-    {
-        printf("  DISK_A load failed!\n");
-        vTaskDelete(NULL);
-        return;
-    }
-    printf("  DISK_A loaded successfully (%u bytes)\n", cpm63k_dsk_len);
-
-    // Load BDSC disk image into drive 1 (DISK_B)
-    printf("Loading DISK_B: bdsc_v1_60.dsk (embedded)\n");
-    if (!pico_disk_load(1, bdsc_v1_60_dsk, bdsc_v1_60_dsk_len))
-    {
-        printf("  DISK_B load failed!\n");
-        vTaskDelete(NULL);
-        return;
-    }
-    printf("  DISK_B loaded successfully (%u bytes)\n", bdsc_v1_60_dsk_len);
-
-    // Set up disk controller for CPU
-    static disk_controller_t disk_controller = {
-        .disk_select = (port_out)pico_disk_select,
-        .disk_status = (port_in)pico_disk_status,
-        .disk_function = (port_out)pico_disk_function,
-        .sector = (port_in)pico_disk_sector,
-        .write = (port_out)pico_disk_write,
-        .read = (port_in)pico_disk_read};
-#endif
 
     // Store disk controller reference for reset function
     g_disk_controller = &disk_controller;

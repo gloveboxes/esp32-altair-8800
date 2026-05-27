@@ -23,7 +23,6 @@ set(app_sources
     "../port_drivers/weather_io.c"
     "../altair8800/intel8080.c"
     "../altair8800/memory.c"
-    "../altair8800/pico_88dcdd_flash.c"
     "../altair8800/esp32_88dcdd_sd_card.c"
     "../drivers/sdcard_esp32/sdcard_esp32.c"
     "../drivers/axs15231b/esp_lcd_axs15231b.c"

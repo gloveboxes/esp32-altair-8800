@@ -1,0 +1,13 @@
+ft -g file://esp32/esp32.c
+ft -g file://sdk/long.c
+
+cc long
+cc esp32
+clink esp32 long
+
+a:pip a:esp32.com=esp32.com
+
+era esp32.*
+era long.*
+
+mcpdone esp32

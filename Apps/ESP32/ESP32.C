@@ -1,14 +1,14 @@
 /*
- * pico.c - Pico Stats Display Tool
+ * esp32.c - ESP32 Stats Display Tool
  *
  * Displays system, lwIP network and Remote FS statistics
  * from the emulator's onboard sensors using I/O ports.
  *
  * To compile with BDS C:
- * cc pico
- * clink pico
+ * cc esp32
+ * clink esp32
 
- * Pico Stats support for Altair 8800
+ * ESP32 Stats support for Altair 8800
  * BDS C 1.6 on CP/M
  *
  * Rewritten for BDS C constraints:
@@ -29,13 +29,6 @@
 #define WID 76
 #define HGT 27
 #define TX 7
-
-/* LWIP Stats port and data values */
-#define STPORT 50
-#define STHEAP 0
-#define STPBUF 1
-#define STSEG 2
-#define STPCB 3
 
 /* RFS Stats port and data values */
 #define RFPORT 51 /* Remote FS stats port */
@@ -62,7 +55,6 @@ int box();
 int title();
 int sect();
 int fld();
-int statln();
 int bios(), bdos(), inp(), outp();
 int atol(), itol(), ldiv(), lmod(), ltoa();
 
@@ -140,26 +132,11 @@ int main()
     cputs(bufnum);
     rst();
 
-    /* lwIP Network Statistics */
-    sect(18, "lwIP Network");
-
-    /* Heap stats */
-    statln(19, STHEAP);
-
-    /* PBUF pool stats */
-    statln(20, STPBUF);
-
-    /* TCP Segment stats */
-    statln(21, STSEG);
-
-    /* TCP PCB stats */
-    statln(22, STPCB);
-
     /* Remote FS Statistics */
-    sect(24, "Remote FS");
+    sect(18, "Remote FS");
 
     /* RFS Cache stats */
-    cur(25, TX);
+    cur(19, TX);
     setfg(37);
     outp(RFPORT, RFTYPE);
     rdstr(buffer, 255);
@@ -360,7 +337,7 @@ int title()
 {
     cur(4, TX);
     setfg(36);
-    cputs("PICO");
+    cputs("ESP32");
     rst();
     cputs(" Stats");
     setfg(33);
@@ -403,20 +380,6 @@ char *val;
     cur(row, TX + 17);
     setfg(37);
     cputs(val);
-    rst();
-    return 0;
-}
-
-/* Read and draw one lwIP stats line. */
-int statln(row, typ)
-int row;
-int typ;
-{
-    cur(row, TX);
-    setfg(37);
-    outp(STPORT, typ);
-    rdstr(buffer, 255);
-    cputs(buffer);
     rst();
     return 0;
 }

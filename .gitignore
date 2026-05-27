@@ -16,3 +16,6 @@ managed_components/
 .DS_Store
 
 references/
+
+# Host runner runtime state
+local_altair/altair_env.txt

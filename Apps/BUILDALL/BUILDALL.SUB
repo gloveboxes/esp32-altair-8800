@@ -19,12 +19,6 @@ b:cc dxsys
 era dxsys.c
 b:cc long
 era long.c
-b:ft -g weather.c
-b:cc weather
-b:clink weather dxtimer dxterm dxsys long
-a:pip a:weather.com=weather.com
-era weather.*
-era long.*
 b:ft -g breakout/breakout.c
 b:cc breakout
 b:clink breakout dxterm dxtimer dxsys
@@ -99,11 +93,16 @@ b:clink clock dxenv long
 a:pip a:clock.com=clock.com
 era clock.*
 era dxenv.*
-b:ft -g pico/pico.c
-b:cc pico
-b:clink pico long
-a:pip a:pico.com=pico.com
-era pico.*
+b:ft -g esp32/esp32.c
+b:cc esp32
+b:clink esp32 long
+a:pip a:esp32.com=esp32.com
+era esp32.*
 era long.*
+era c.ccc
+era cc2.com
+era deff.crl
+era deff2.crl
+era stdio.h
 b:
 b:mcpdone buildall
