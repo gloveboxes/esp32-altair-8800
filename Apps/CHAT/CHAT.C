@@ -16,7 +16,7 @@
 #define MSG_AST 2
 
 /* Limits */
-#define MAX_MSG 10
+#define MAX_MSG 20
 #define SYS_LEN 1024
 #define REQ_LEN 8192
 #define CLINE 80
@@ -57,7 +57,6 @@ char *g_mptr[MAX_MSG];
 /* Function declarations */
 int ch_init();
 int ch_load();
-int ch_menu();
 int ch_chat();
 int ch_addm();
 int ch_show();
@@ -73,6 +72,7 @@ int ch_stok();
 int ch_stmp();
 int ch_smdl();
 int ch_hlp();
+int ch_cmds();
 
 /* String functions */
 int strlen();
@@ -95,8 +95,6 @@ main(argc, argv)
 int argc;
 char *argv[];
 {
-    int choice;
-
     if (argc > 1)
     {
         if (strcmp(argv[1], "-H") == 0 || strcmp(argv[1], "-h") == 0 ||
@@ -121,38 +119,8 @@ char *argv[];
         return 1;
     }
 
-    /* Main loop */
-    while (1)
-    {
-        choice = ch_menu();
-
-        switch (choice)
-        {
-        case 1:
-            ch_chat();
-            break;
-        case 2:
-            ch_show();
-            printf("Press any key to continue...");
-            x_conin();
-            break;
-        case 3:
-            ch_clr();
-            printf("\nPress any key to continue...");
-            x_conin();
-            break;
-        case 0:
-            return 0;
-            break;
-        default:
-            printf("Invalid choice\n");
-            break;
-        }
-
-        /* printf("Press any key to continue...");
-        x_conin();
-        printf("\n"); */
-    }
+    /* Drop straight into the chat session. */
+    ch_chat();
 
     return 0;
 }
@@ -510,26 +478,11 @@ char *val;
     return 0;
 }
 
-/* Display main menu */
-int ch_menu()
+/* Display in-chat command list */
+int ch_cmds()
 {
-    int choice;
-
-    x_clrsc();
-    x_curmv(1, 1);
-
-    printf("Altair 8800 Chat App v%s\n", CHT_VER);
-    printf("=========================\n\n");
-    printf("1. Start Chat\n");
-    printf("2. Show Messages\n");
-    printf("3. Clear History\n");
-    printf("0. Quit\n\n");
-    printf("Choice: ");
-
-    choice = x_conin() - '0';
-    /* printf("%d\n\n", choice); */
-
-    return choice;
+    printf("Commands: /help (/?)  /history (/h)  /reset (/r)  /quit (/q)\n");
+    return 0;
 }
 
 /* Main chat interface */
@@ -538,14 +491,14 @@ int ch_chat()
     char input[USR_LEN];
 
     x_clrsc();
-    printf("=== Chat Session ===\n");
-    printf("Type 'quit' to exit, 'clear' to clear screen\n\n");
-    printf("Config (ENV, chat.cfg fallback)\n");
-    printf("- Model: %s\n", g_model);
-    printf("- Temperature: %s\n", g_tempv);
-    printf("- Max Tokens: %s\n\n", g_mtok);
-    printf("System message (chat.sys):\n%s\n\n", g_sys);
-
+    printf("Altair 8800 Chat v%s\n", CHT_VER);
+    printf("=====================\n\n");
+    printf("Model:       %s\n", g_model);
+    printf("Temperature: %s\n", g_tempv);
+    printf("Max tokens:  %s\n\n", g_mtok);
+    printf("System (chat.sys):\n%s\n\n", g_sys);
+    ch_cmds();
+    printf("\n");
 
     while (1)
     {
@@ -556,18 +509,33 @@ int ch_chat()
 
         ch_line(input, USR_LEN);
 
-        /* Check for commands */
-        if (strcmp(input, "quit") == 0)
+        /* Slash commands and bare equivalents */
+        if (strcmp(input, "/quit") == 0 || strcmp(input, "quit") == 0 ||
+            strcmp(input, "/exit") == 0 || strcmp(input, "exit") == 0 ||
+            strcmp(input, "/q") == 0)
         {
             break;
         }
-        else if (strcmp(input, "clear") == 0)
+        if (strcmp(input, "/history") == 0 || strcmp(input, "history") == 0 ||
+            strcmp(input, "/h") == 0)
         {
-            x_clrsc();
-            printf("=== Chat Session ===\n\n");
+            ch_show();
             continue;
         }
-        else if (strcmp(input, "") == 0)
+        if (strcmp(input, "/reset") == 0 || strcmp(input, "reset") == 0 ||
+            strcmp(input, "/r") == 0)
+        {
+            ch_clr();
+            printf("\n");
+            continue;
+        }
+        if (strcmp(input, "/help") == 0 || strcmp(input, "help") == 0 ||
+            strcmp(input, "?") == 0 || strcmp(input, "/?") == 0)
+        {
+            ch_cmds();
+            continue;
+        }
+        if (strcmp(input, "") == 0)
         {
             continue;
         }
@@ -575,7 +543,7 @@ int ch_chat()
         /* Add user message */
         ch_addm(MSG_USR, input);
 
-        /* Simulate API call */
+        /* Show assistant prefix and stream the reply */
         printf("\n");
         x_setc(XC_CYN);
         printf("Assistant: \n");
