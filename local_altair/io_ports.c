@@ -45,6 +45,7 @@ void io_port_out(uint8_t port, uint8_t data)
             request_unit.len = time_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
         case 45:
+        case 48:
         case 70:
             request_unit.len = utility_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;

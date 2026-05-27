@@ -1,15 +1,12 @@
 /*
- * onboard.c - Onboard sensor monitoring for Altair 8800
- * Version 1.2
+ * onboard.c - Onboard system monitor for Altair 8800
+ * Version 1.3
  *
- * Reads temperature, pressure, humidity and system information
- * from the emulator's onboard sensors using I/O ports.
- * Also displays lwIP network stack statistics.
- * Real-time display using VT100/ANSI escape sequences.
+ * Polls system information (emulator version, uptime) from the
+ * emulator via I/O ports and refreshes a VT100/ANSI dashboard
+ * every 5 seconds.
  *
  * Usage: Press ESC to quit
- *
- * Based on onboard.bas - converted to BDS C 1.6
  *
  * BDS C Compiler and Libraries with Long Integer support
  * https://msxhub.com/BDSC
@@ -35,17 +32,6 @@
 #define TMRID 0    /* Use timer 0 */
 #define DLYMS 5000 /* 5 second delay */
 
-/* LWIP Stats port and data values */
-#define STPORT 50
-#define STHEAP 0
-#define STPBUF 1
-#define STSEG 2
-#define STPCB 3
-
-/* RFS Stats port and data values */
-#define RFPORT 51 /* Remote FS stats port */
-#define RFTYPE 0  /* Cache stats type */
-
 /* Function prototypes */
 int main();
 int rdstr();
@@ -67,7 +53,6 @@ int box();
 int title();
 int sect();
 int fld();
-int statln();
 
 /* Timer library functions */
 int x_delay();
@@ -107,8 +92,7 @@ int main()
             break; /* Exit main loop immediately */
         }
 
-        /* Start accelerometer and increment counter */
-        outp(64, 5);
+        /* Increment refresh counter */
         ladd(lcount, lcount, lone);
 
         /* Update reading count */
@@ -157,9 +141,6 @@ int main()
     cputs("User requested quit. Stopping...");
     cputs(pad);
     rst();
-
-    /* Stop the accelerometer */
-    outp(64, 4);
 
     /* Restore cursor and move to bottom */
     cur(30, 1);
@@ -430,21 +411,6 @@ char *val;
     return 0;
 }
 
-/* Read and draw one lwIP stats line. */
-int statln(row, typ)
-int row;
-int typ;
-{
-    cur(row, TX);
-    setfg(37);
-    outp(STPORT, typ);
-    rdstr(sbuf, 255);
-    cputs(sbuf);
-    cputs(pad);
-    rst();
-    return 0;
-}
-
 /*
  * Optimized Functions
  */
@@ -469,8 +435,6 @@ int initd()
     title();
     sect(9, "System");
     sect(12, "Uptime");
-    sect(16, "lwIP Network");
-    sect(23, "Remote FS");
 
     return 0;
 }
@@ -520,21 +484,6 @@ int dsplay()
         cputs("0");
     }
     cputs(bmins);
-    cputs(pad);
-    rst();
-
-    /* Get and display lwIP network statistics */
-    statln(17, STHEAP);
-    statln(18, STPBUF);
-    statln(19, STSEG);
-    statln(20, STPCB);
-
-    /* RFS Cache stats */
-    cur(24, TX);
-    setfg(37);
-    outp(RFPORT, RFTYPE);
-    rdstr(sbuf, 255);
-    cputs(sbuf);
     cputs(pad);
     rst();
 

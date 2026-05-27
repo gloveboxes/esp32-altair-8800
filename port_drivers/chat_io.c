@@ -1349,7 +1349,7 @@ static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch)
                     {
                         snprintf(msg, sizeof(msg),
                                  "Chat HTTP 404 - endpoint or model not found.\n"
-                                 "Check 'endpoint' URL and 'model' in chat.cfg.\n");
+                                 "Check 'CHAT_ENDPOINT' URL and 'CHAT_MODEL' in the env store.\n");
                     }
                     else if (parser->status_code == 401 || parser->status_code == 403)
                     {
@@ -1360,7 +1360,7 @@ static void chat_process_rx_byte(chat_parse_t *parser, uint8_t ch)
                     else if (parser->status_code == 400)
                     {
                         snprintf(msg, sizeof(msg),
-                                 "Chat HTTP 400 - bad request. Check 'model' in chat.cfg\n"
+                                 "Chat HTTP 400 - bad request. Check 'CHAT_MODEL' in the env store\n"
                                  "and chat.sys content.\n");
                     }
                     else if (parser->status_code == 429)

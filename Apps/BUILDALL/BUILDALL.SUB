@@ -41,7 +41,6 @@ a:pip a:mancala.com=mancala.com
 era mancala.*
 b:ft -g chat/chat.c
 b:ft -g chat/chat.sys
-b:ft -g chat/chat.cfg
 b:ft -g chat/chatjson.c
 b:ft -g chat/chatjson.h
 b:ft -g sdk/dxenv.c
@@ -51,10 +50,14 @@ b:cc chat
 b:clink chat chatjson dxterm dxtimer dxenv
 a:pip a:chat.com=chat.com
 a:pip a:chat.sys=chat.sys
-a:pip a:chat.cfg=chat.cfg
 era chat.*
 era chatjson.*
 era dxenv.*
+b:ft -g onboard/onboard.c
+b:cc onboard
+b:clink onboard dxtimer long
+a:pip a:onboard.com=onboard.com
+era onboard.*
 b:ft -g tetris/tetris.c
 b:cc tetris
 b:clink tetris
@@ -73,11 +76,6 @@ era edit.*
 b:ft -g sdk/long.c
 b:cc long
 era long.c
-b:ft -g onboard/onboard.c
-b:cc onboard
-b:clink onboard dxtimer long
-a:pip a:onboard.com=onboard.com
-era onboard.*
 era dx*.*
 b:ft -g sdk/dxenv.c
 b:cc dxenv

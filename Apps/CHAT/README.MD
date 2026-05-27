@@ -36,8 +36,8 @@ provider/endpoint, edit `local_altair/altair_env.txt` and relaunch
 | `CHAT_MAX_TOKENS`  | `1024`      | `max_tokens` in the request |
 | `CHAT_TEMPERATURE` | `0.7`       | Sampling temperature |
 
-These can also be set in `CHAT.CFG` on disk A:; env-store values override the
-config file when present.
+These can also be set in the env store with `ENV NAME=value`; values are
+read fresh each time `CHAT.COM` starts.
 
 ## Example: OpenAI
 

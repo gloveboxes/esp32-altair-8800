@@ -52,6 +52,7 @@ void io_port_out(uint8_t port, uint8_t data)
 
         // Utility ports
         case 45:
+        case 48:
         case 70:
             request_unit.len = utility_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
@@ -61,9 +62,7 @@ void io_port_out(uint8_t port, uint8_t data)
             request_unit.len = weather_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
 
-        // Stats ports (50, 51) - not implemented on ESP32 yet
-        // HTTP ports (109, 110, 114) - not implemented on ESP32 yet
-        // OpenAI chat ports
+        // Chat ports (OpenAI / compatible)
         case 120:
         case 121:
         case 122:
@@ -113,8 +112,7 @@ uint8_t io_port_in(uint8_t port)
             }
             return 0x00;
 
-        // HTTP status/data ports (33, 201) - not implemented on ESP32 yet
-        // OpenAI chat ports
+        // Chat ports (OpenAI / compatible)
         case 120:
         case 123:
         case 124:

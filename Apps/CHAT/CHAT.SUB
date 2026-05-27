@@ -42,12 +42,9 @@ era dxtimer.crl
 era dxenv.*
 
 ft -g file://chat/chat.sys
-ft -g file://chat/chat.cfg
 
 a:pip a:chat.com=chat.com
 a:pip a:chat.sys=chat.sys
-a:pip a:chat.cfg=chat.cfg
 
 era chat.com
-era chat.cfg
 era chat.sys

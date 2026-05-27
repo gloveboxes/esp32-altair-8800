@@ -19,7 +19,6 @@
 #define MAX_MSG 20
 #define SYS_LEN 1024
 #define REQ_LEN 8192
-#define CLINE 80
 #define CFG_VAL 16
 #define CMLEN 64
 #define EVLEN 128
@@ -65,9 +64,7 @@ int ch_api();
 int ch_recv();
 int ch_prn();
 int ch_line();
-int ch_lcfg();
 int ch_lenv();
-int ch_cfg();
 int ch_stok();
 int ch_stmp();
 int ch_smdl();
@@ -178,8 +175,7 @@ int ch_load()
 
     fclose(fp);
 
-    /* Load optional file config, then ENV overrides if present. */
-    ch_lcfg();
+    /* Load chat options from the env store. */
     ch_lenv();
 
     return 0;
@@ -203,8 +199,7 @@ int ch_hlp()
     printf("  ENV CHAT_PROVIDER=openai\r\n");
     printf("  ENV CHAT_OPENAI_KEY=your-api-key\r\n");
     printf("  ENV CHAT_MODEL=gpt-4o-mini\r\n\r\n");
-    printf("CHAT.CFG is used as a fallback for model, max_tokens,\r\n");
-    printf("and temperature. Missing ENV values are seeded on run.\r\n");
+    printf("Missing ENV values are seeded on first run.\r\n");
     return 0;
 }
 
@@ -230,132 +225,6 @@ int ch_lenv()
         ch_stmp(val);
     else
         e_set("CHAT_TEMPERATURE", g_tempv);
-
-    return 0;
-}
-
-/* Parse chat.cfg for optional parameters */
-int ch_lcfg()
-{
-    int ch;
-    int idx;
-    char line[CLINE];
-    FILE *fp;
-
-    fp = fopen("chat.cfg", "r");
-    if (fp == 0)
-    {
-        return 0;
-    }
-
-    idx = 0;
-    while ((ch = fgetc(fp)) != EOF)
-    {
-        if (ch == 26)
-        {
-            break;
-        }
-
-        if (ch == '\r')
-        {
-            continue;
-        }
-
-        if (ch == '\n')
-        {
-            line[idx] = 0;
-            if (idx > 0)
-                ch_cfg(line);
-            idx = 0;
-            continue;
-        }
-
-        if (idx < CLINE - 1)
-        {
-            line[idx++] = ch & 0x7F;
-        }
-    }
-
-    if (idx > 0)
-    {
-        line[idx] = 0;
-        ch_cfg(line);
-    }
-
-    fclose(fp);
-
-    return 0;
-}
-
-/* Handle a single config line */
-int ch_cfg(line)
-char *line;
-{
-    char key[CFG_VAL];
-    char val[CLINE];
-    char *ptr;
-    int i;
-
-    ptr = line;
-
-    /* Skip leading whitespace */
-    while (*ptr == ' ' || *ptr == '\t')
-        ptr++;
-
-    if (*ptr == 0 || *ptr == '#')
-        return 0;
-
-    i = 0;
-    while (*ptr && *ptr != '=' && *ptr != ' ' && *ptr != '\t')
-    {
-        if (i < CFG_VAL - 1)
-            key[i++] = *ptr;
-        ptr++;
-    }
-    key[i] = 0;
-
-    while (*ptr && *ptr != '=')
-        ptr++;
-    if (*ptr != '=')
-        return 0;
-    ptr++;
-
-    while (*ptr == ' ' || *ptr == '\t')
-        ptr++;
-
-    i = 0;
-    if (strcmp(key, "model") == 0)
-    {
-        /* For model, allow full line except comment */
-        while (*ptr && *ptr != '#' && *ptr != '\n' && *ptr != '\r')
-        {
-            if (i < CLINE - 1)
-                val[i++] = *ptr;
-            ptr++;
-        }
-    }
-    else
-    {
-        while (*ptr && *ptr != '#' && *ptr != '\n' && *ptr != '\r')
-        {
-            if (*ptr == ' ' || *ptr == '\t')
-                break;
-            if (i < CLINE - 1)
-                val[i++] = *ptr;
-            ptr++;
-        }
-    }
-    val[i] = 0;
-
-    if (val[0] == 0)
-        return 0;
-
-    if (strcmp(key, "max_tokens") == 0)
-        ch_stok(val);
-    else if (strcmp(key, "temperature") == 0)
-        ch_stmp(val);
-    else if (strcmp(key, "model") == 0)
-        ch_smdl(val);
 
     return 0;
 }

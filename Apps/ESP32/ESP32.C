@@ -30,10 +30,6 @@
 #define HGT 27
 #define TX 7
 
-/* RFS Stats port and data values */
-#define RFPORT 51 /* Remote FS stats port */
-#define RFTYPE 0  /* Cache stats type */
-
 /* Global buffer */
 char buffer[256];
 
@@ -73,18 +69,18 @@ int main()
 
     sect(7, "System");
 
-    /* Get Device ID - Port 46, data 0 */
-    outp(46, 0);
+    /* Get Hostname - Port 48, data 0 */
+    outp(48, 0);
     rdstr(buffer, 255);
     fld(8, "Hostname", buffer);
 
-    /* Get WiFi IP Address - Port 46, data 1 */
-    outp(46, 1);
+    /* Get WiFi IP Address - Port 48, data 1 */
+    outp(48, 1);
     rdstr(buffer, 255);
     fld(9, "WiFi IP", buffer);
 
-    /* Get Physical Device ID - Port 46, data 2 */
-    outp(46, 2);
+    /* Get Device ID - Port 48, data 2 */
+    outp(48, 2);
     rdstr(buffer, 255);
     fld(10, "Device ID", buffer);
 
@@ -130,17 +126,6 @@ int main()
         chput('0');
     }
     cputs(bufnum);
-    rst();
-
-    /* Remote FS Statistics */
-    sect(18, "Remote FS");
-
-    /* RFS Cache stats */
-    cur(19, TX);
-    setfg(37);
-    outp(RFPORT, RFTYPE);
-    rdstr(buffer, 255);
-    cputs(buffer);
     rst();
 
     cur(30, 1);
