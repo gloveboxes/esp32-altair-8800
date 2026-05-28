@@ -97,6 +97,16 @@ cmake -S altair_mcp_server -B altair_mcp_server/build-msvc-arm64 -G "Visual Stud
 cmake --build altair_mcp_server/build-msvc-arm64 --config Release
 ```
 
+To build both macOS/Linux host tools together, use the shared helper from the repo root or the `scripts` folder:
+
+```sh
+./scripts/build-host-tools.sh
+```
+
+That script builds both `altair_local` and `altair_mcp_server` in their default
+`build` directories. Pass `--clean` to remove both build directories first, or
+`--debug` to configure Debug builds instead of Release.
+
 To build both Windows host tools together, use the shared helper from the repo root or the `scripts` folder:
 
 ```powershell
