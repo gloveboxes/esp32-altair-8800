@@ -9,13 +9,55 @@ if errorlevel 1 exit /b %errorlevel%
 if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
     set "PLATFORM=ARM64"
     set "VSARCH=arm64"
+    set "VCPKG_TRIPLET=arm64-windows"
     set "LOCAL_BUILDDIR=altair_local\build-msvc-arm64"
     set "MCP_BUILDDIR=altair_mcp_server\build-msvc-arm64"
 ) else (
     set "PLATFORM=x64"
     set "VSARCH=amd64"
+    set "VCPKG_TRIPLET=x64-windows"
     set "LOCAL_BUILDDIR=altair_local\build-msvc"
     set "MCP_BUILDDIR=altair_mcp_server\build-msvc"
+)
+
+set "CMAKE_EXTRA_ARGS="
+if not defined VCPKG_ROOT (
+    if exist "%USERPROFILE%\vcpkg\scripts\buildsystems\vcpkg.cmake" (
+        set "VCPKG_ROOT=%USERPROFILE%\vcpkg"
+    )
+)
+
+if not defined VCPKG_ROOT (
+    if exist "C:\vcpkg\scripts\buildsystems\vcpkg.cmake" (
+        set "VCPKG_ROOT=C:\vcpkg"
+    )
+)
+
+if not defined VCPKG_ROOT (
+    if exist "%REPO_ROOT%\vcpkg\scripts\buildsystems\vcpkg.cmake" (
+        set "VCPKG_ROOT=%REPO_ROOT%\vcpkg"
+    )
+)
+
+if defined VCPKG_ROOT (
+    if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
+        set "CMAKE_EXTRA_ARGS=-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%VCPKG_TRIPLET%"
+        echo Using vcpkg from "%VCPKG_ROOT%" with triplet %VCPKG_TRIPLET%.
+    )
+)
+
+if not defined CMAKE_EXTRA_ARGS (
+    echo vcpkg was not found. Building without libcurl support.
+    echo To enable chat and weather on Windows, install vcpkg and then run:
+    echo   vcpkg install curl[ssl]:%VCPKG_TRIPLET%
+    echo and set VCPKG_ROOT if your vcpkg checkout is not in %%USERPROFILE%%\vcpkg, C:\vcpkg, or %REPO_ROOT%\vcpkg.
+) else (
+    if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include\curl\curl.h" (
+        echo Found curl headers for %VCPKG_TRIPLET%.
+    ) else (
+        echo vcpkg was found, but curl is not installed for %VCPKG_TRIPLET%.
+        echo Run: vcpkg install curl[ssl]:%VCPKG_TRIPLET%
+    )
 )
 
 set "VSDEVCMD="
@@ -63,7 +105,7 @@ if errorlevel 1 (
     exit /b %errorlevel%
 )
 
-cmake -S altair_local -B "%LOCAL_BUILDDIR%" -G "Visual Studio 17 2022" -A %PLATFORM%
+cmake -S altair_local -B "%LOCAL_BUILDDIR%" -G "Visual Studio 17 2022" -A %PLATFORM% %CMAKE_EXTRA_ARGS%
 if errorlevel 1 (
     popd
     exit /b %errorlevel%
@@ -75,7 +117,7 @@ if errorlevel 1 (
     exit /b %errorlevel%
 )
 
-cmake -S altair_mcp_server -B "%MCP_BUILDDIR%" -G "Visual Studio 17 2022" -A %PLATFORM%
+cmake -S altair_mcp_server -B "%MCP_BUILDDIR%" -G "Visual Studio 17 2022" -A %PLATFORM% %CMAKE_EXTRA_ARGS%
 if errorlevel 1 (
     popd
     exit /b %errorlevel%

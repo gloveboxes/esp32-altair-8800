@@ -20,30 +20,79 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef HAVE_LIBCURL
-#include <pthread.h>
-#include <curl/curl.h>
-#elif defined(_WIN32)
-typedef int pthread_mutex_t;
+#ifdef _WIN32
+#include <windows.h>
+typedef SRWLOCK pthread_mutex_t;
+typedef HANDLE pthread_t;
+typedef void *(*thread_fn_t)(void *);
+
+typedef struct
+{
+    thread_fn_t func;
+    void *arg;
+} thread_arg_t;
 
 static int pthread_mutex_init(pthread_mutex_t* mutex, const void* attr)
 {
-    (void)mutex;
     (void)attr;
+    InitializeSRWLock(mutex);
     return 0;
 }
 
 static int pthread_mutex_lock(pthread_mutex_t* mutex)
 {
-    (void)mutex;
+    AcquireSRWLockExclusive(mutex);
     return 0;
 }
 
 static int pthread_mutex_unlock(pthread_mutex_t* mutex)
 {
-    (void)mutex;
+    ReleaseSRWLockExclusive(mutex);
     return 0;
 }
+
+static DWORD WINAPI thread_run(LPVOID arg)
+{
+    thread_arg_t* targ = (thread_arg_t*)arg;
+    thread_fn_t func = targ->func;
+    void* farg = targ->arg;
+
+    free(targ);
+    func(farg);
+    return 0;
+}
+
+static int pthread_create(pthread_t* thread, void* attr, thread_fn_t func, void* arg)
+{
+    thread_arg_t* targ;
+
+    (void)attr;
+    targ = (thread_arg_t*)malloc(sizeof(thread_arg_t));
+    if (!targ)
+    {
+        return -1;
+    }
+    targ->func = func;
+    targ->arg = arg;
+    *thread = CreateThread(NULL, 0, thread_run, targ, 0, NULL);
+    if (!*thread)
+    {
+        free(targ);
+        return -1;
+    }
+    return 0;
+}
+
+static int pthread_detach(pthread_t thread)
+{
+    return CloseHandle(thread) ? 0 : -1;
+}
+#else
+#include <pthread.h>
+#endif
+
+#ifdef HAVE_LIBCURL
+#include <curl/curl.h>
 #endif
 
 #define CHAT_REQUEST_MAX 8192

@@ -433,12 +433,18 @@ int stat;
     if (stat == WS_ERR)
     {
         wfget(WF_ERR);
-        sprintf(l0, "Weather: %s", wbuf);
+        if (strcmp(wbuf, "libcurl not available - weather disabled") == 0)
+            sprintf(l0, "Weather unavailable");
+        else
+            sprintf(l0, "Weather: %s", wbuf);
         n0 = strlen(l0);
         scol = ((SCRW - n0) / 2) + 1;
         if (scol < 3) scol = 3;
         curmv(WROW, scol);
-        printf("\033[1;92mWeather: \033[1;91m%s\033[0m", wbuf);
+        if (strcmp(wbuf, "libcurl not available - weather disabled") == 0)
+            printf("\033[0;90mWeather unavailable\033[0m");
+        else
+            printf("\033[1;92mWeather: \033[1;91m%s\033[0m", wbuf);
         return 0;
     }
 

@@ -25,32 +25,78 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
 #ifdef _WIN32
 #include <windows.h>
-#endif
-
-#ifdef HAVE_LIBCURL
-#include <pthread.h>
-#include <curl/curl.h>
-#elif defined(_WIN32)
-typedef int pthread_mutex_t;
+#include <process.h>
+typedef SRWLOCK pthread_mutex_t;
 typedef int pthread_cond_t;
-typedef int pthread_t;
+typedef HANDLE pthread_t;
+typedef void *(*thread_fn_t)(void *);
 
-#define PTHREAD_MUTEX_INITIALIZER 0
+typedef struct
+{
+    thread_fn_t func;
+    void *arg;
+} thread_arg_t;
+
+#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
 #define PTHREAD_COND_INITIALIZER 0
 
 static int pthread_mutex_lock(pthread_mutex_t* mutex)
 {
-    (void)mutex;
+    AcquireSRWLockExclusive(mutex);
     return 0;
 }
 
 static int pthread_mutex_unlock(pthread_mutex_t* mutex)
 {
-    (void)mutex;
+    ReleaseSRWLockExclusive(mutex);
     return 0;
 }
+
+static DWORD WINAPI thread_run(LPVOID arg)
+{
+    thread_arg_t* targ = (thread_arg_t*)arg;
+    thread_fn_t func = targ->func;
+    void* farg = targ->arg;
+
+    free(targ);
+    func(farg);
+    return 0;
+}
+
+static int pthread_create(pthread_t* thread, void* attr, thread_fn_t func, void* arg)
+{
+    thread_arg_t* targ;
+
+    (void)attr;
+    targ = (thread_arg_t*)malloc(sizeof(thread_arg_t));
+    if (!targ)
+    {
+        return -1;
+    }
+    targ->func = func;
+    targ->arg = arg;
+    *thread = CreateThread(NULL, 0, thread_run, targ, 0, NULL);
+    if (!*thread)
+    {
+        free(targ);
+        return -1;
+    }
+    return 0;
+}
+
+static int pthread_detach(pthread_t thread)
+{
+    return CloseHandle(thread) ? 0 : -1;
+}
+#else
+#include <pthread.h>
+#endif
+
+#ifdef HAVE_LIBCURL
+#include <curl/curl.h>
 #endif
 
 /* ---- constants ---- */
@@ -486,18 +532,28 @@ static bool weather_fetch_once(void)
 
 static void weather_wait_seconds_locked(int seconds)
 {
+#ifdef _WIN32
+    pthread_mutex_unlock(&s_mutex);
+    Sleep((DWORD)(seconds * 1000));
+    pthread_mutex_lock(&s_mutex);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += seconds;
     pthread_cond_timedwait(&s_cond, &s_mutex, &ts);
+#endif
 }
 
 static void *weather_thread_fn(void *arg)
 {
     (void)arg;
     /* Brief settle so the rest of the host has finished starting up. */
+#ifdef _WIN32
+    Sleep(2000);
+#else
     struct timespec settle = { .tv_sec = 2, .tv_nsec = 0 };
     nanosleep(&settle, NULL);
+#endif
 
     int64_t start_us = weather_now_us();
 
