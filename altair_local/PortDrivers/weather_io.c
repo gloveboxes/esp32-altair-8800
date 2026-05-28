@@ -19,7 +19,6 @@
 #include "../../port_drivers/json_scan.h"
 
 #include <errno.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,7 +27,27 @@
 #include <time.h>
 
 #ifdef HAVE_LIBCURL
+#include <pthread.h>
 #include <curl/curl.h>
+#elif defined(_WIN32)
+typedef int pthread_mutex_t;
+typedef int pthread_cond_t;
+typedef int pthread_t;
+
+#define PTHREAD_MUTEX_INITIALIZER 0
+#define PTHREAD_COND_INITIALIZER 0
+
+static int pthread_mutex_lock(pthread_mutex_t* mutex)
+{
+    (void)mutex;
+    return 0;
+}
+
+static int pthread_mutex_unlock(pthread_mutex_t* mutex)
+{
+    (void)mutex;
+    return 0;
+}
 #endif
 
 /* ---- constants ---- */

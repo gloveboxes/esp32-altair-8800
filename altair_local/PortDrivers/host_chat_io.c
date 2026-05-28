@@ -15,14 +15,35 @@
 #include "chat_io.h"
 #include "environment_io.h"
 
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef HAVE_LIBCURL
+#include <pthread.h>
 #include <curl/curl.h>
+#elif defined(_WIN32)
+typedef int pthread_mutex_t;
+
+static int pthread_mutex_init(pthread_mutex_t* mutex, const void* attr)
+{
+    (void)mutex;
+    (void)attr;
+    return 0;
+}
+
+static int pthread_mutex_lock(pthread_mutex_t* mutex)
+{
+    (void)mutex;
+    return 0;
+}
+
+static int pthread_mutex_unlock(pthread_mutex_t* mutex)
+{
+    (void)mutex;
+    return 0;
+}
 #endif
 
 #define CHAT_REQUEST_MAX 8192
