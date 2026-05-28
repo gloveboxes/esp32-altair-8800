@@ -91,6 +91,22 @@ static bool queue_windows_key(int key)
 
 void host_prefer_efficiency_core(void)
 {
+    HANDLE thread;
+
+    thread = GetCurrentThread();
+    SetThreadPriority(thread, THREAD_PRIORITY_LOWEST);
+
+#ifdef THREAD_POWER_THROTTLING_CURRENT_VERSION
+    {
+        THREAD_POWER_THROTTLING_STATE throttle;
+
+        ZeroMemory(&throttle, sizeof(throttle));
+        throttle.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+        throttle.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        throttle.StateMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        SetThreadInformation(thread, ThreadPowerThrottling, &throttle, sizeof(throttle));
+    }
+#endif
 }
 
 uint32_t host_monotonic_ms(void)
@@ -196,6 +212,7 @@ bool host_terminal_write_byte(uint8_t ch)
 #else
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -217,6 +234,20 @@ void host_prefer_efficiency_core(void)
     if (rc != 0)
     {
         fprintf(stderr, "altair-local: failed to set utility QoS (%d)\n", rc);
+    }
+
+#ifdef PRIO_DARWIN_THREAD
+#ifdef PRIO_DARWIN_BG
+    if (setpriority(PRIO_DARWIN_THREAD, 0, PRIO_DARWIN_BG) != 0)
+    {
+        perror("setpriority(PRIO_DARWIN_THREAD)");
+    }
+#endif
+#endif
+#else
+    if (setpriority(PRIO_PROCESS, 0, 19) != 0)
+    {
+        perror("setpriority(PRIO_PROCESS)");
     }
 #endif
 }
