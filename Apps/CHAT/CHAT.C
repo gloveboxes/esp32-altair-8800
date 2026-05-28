@@ -51,6 +51,7 @@ int g_cur;
 /* Shared request/response buffers */
 char g_req[REQ_LEN];
 char g_resp[AST_LEN];
+int  g_trunc;
 
 /* Message storage - dynamic per-message alloc, EDIT.C style.
    g_mptr[i] owns the buffer for message i; freed when the
@@ -60,6 +61,7 @@ char *g_mptr[MAX_MSG];
 /* Word-wrap state - shared between streaming echo and history replay.
    Not re-entrant; reset via ch_wrst() before each use. */
 int  g_col;
+int  g_soft;
 int  g_wpos;
 char g_wbuf[WBUFSZ];
 
@@ -68,11 +70,14 @@ int ch_init();
 int ch_load();
 int ch_chat();
 int ch_addm();
+int ch_drop();
 int ch_show();
 int ch_clr();
 int ch_api();
 int ch_recv();
 int ch_prn();
+int ch_hmem();
+int ch_fmem();
 int ch_line();
 int ch_lenv();
 int ch_stok();
@@ -149,6 +154,7 @@ int ch_init()
     /* Clear message arrays */
     g_mcnt = 0;
     g_cur = 0;
+    g_trunc = 0;
 
     for (i = 0; i < MAX_MSG; i++)
     {
@@ -453,25 +459,14 @@ char *text;
 
     if (g_mcnt >= MAX_MSG)
     {
-        /* Shift messages down, freeing the oldest. */
-        if (g_mptr[0])
-            free(g_mptr[0]);
-
-        for (i = 0; i < MAX_MSG - 1; i++)
-        {
-            g_types[i] = g_types[i + 1];
-            g_mptr[i] = g_mptr[i + 1];
-        }
-        g_types[MAX_MSG - 1] = 0;
-        g_mptr[MAX_MSG - 1] = 0;
-        g_mcnt = MAX_MSG - 1;
+        ch_drop();
     }
 
     len = strlen(text);
     p = alloc(len + 1);
     if (p == 0)
     {
-        printf("Out of memory adding message\n");
+        printf("[out of memory adding message]\n");
         return -1;
     }
     strcpy(p, text);
@@ -484,10 +479,34 @@ char *text;
     return 0;
 }
 
+int ch_drop()
+{
+    int i;
+
+    if (g_mcnt <= 0)
+        return -1;
+
+    if (g_mptr[0])
+        free(g_mptr[0]);
+
+    for (i = 0; i < g_mcnt - 1; i++)
+    {
+        g_types[i] = g_types[i + 1];
+        g_mptr[i] = g_mptr[i + 1];
+    }
+
+    g_mcnt--;
+    g_types[g_mcnt] = 0;
+    g_mptr[g_mcnt] = 0;
+    return 0;
+}
+
 /* Show message history */
 int ch_show()
 {
     int i;
+    int hmem;
+    int fmem;
 
     x_clrsc();
     printf("=== Message History ===\n\n");
@@ -521,8 +540,54 @@ int ch_show()
         x_rstc();
     }
 
+    hmem = ch_hmem();
+    fmem = ch_fmem();
+    printf("Diag: msgs=%d  hist=%d  sys=%d  free~=%d\n",
+           g_mcnt, hmem, strlen(g_sys) + 1, fmem);
+    printf("free~=largest alloc block, approximate\n");
     printf("\n");
     return 0;
+}
+
+int ch_hmem()
+{
+    int i;
+    int tot;
+
+    tot = 0;
+    for (i = 0; i < g_mcnt; i++)
+    {
+        if (g_mptr[i])
+            tot += strlen(g_mptr[i]) + 1;
+    }
+
+    return tot;
+}
+
+int ch_fmem()
+{
+    int lo;
+    int hi;
+    int mid;
+    char *p;
+
+    lo = 0;
+    hi = 30000;
+
+    while (lo < hi)
+    {
+        mid = (lo + hi + 1) / 2;
+        p = alloc(mid);
+        if (p)
+        {
+            free(p);
+            lo = mid;
+        }
+        else
+            hi = mid - 1;
+    }
+
+    return lo;
 }
 
 /* Clear message history */
@@ -547,6 +612,7 @@ int ch_api()
 {
     int reqlen, resplen;
     int i;
+    int trimd;
     char *dbg;
 
     /* Debug: show system message and queued messages */
@@ -570,12 +636,23 @@ int ch_api()
     */
 
     /* Generate JSON request payload */
+    trimd = 0;
     reqlen = j_genr(g_sys, g_types, g_mptr, g_mcnt, g_req, REQ_LEN);
+    while (reqlen < 0 && g_mcnt > 0)
+    {
+        ch_drop();
+        trimd++;
+        reqlen = j_genr(g_sys, g_types, g_mptr, g_mcnt, g_req, REQ_LEN);
+    }
+
     if (reqlen < 0)
     {
         printf("Error: JSON too large for buffer\n");
         return -1;
     }
+
+    if (trimd > 0)
+        printf("[history trimmed: %d]\n", trimd);
 
     /* Debug: show JSON prior to sending */
     /* printf("Generated JSON payload (%d bytes):\n%s\n\n", reqlen, g_req); */
@@ -611,21 +688,15 @@ int ch_api()
 
     if (resplen > 0)
     {
-        /* For streaming, response already contains the content text */
-        /* Copy to content buffer with length check */
-        if (resplen < AST_LEN)
-        {
-            /* Add assistant response to history */
-            ch_addm(MSG_AST, g_resp);
+        /* Add assistant response to history */
+        ch_addm(MSG_AST, g_resp);
 
-            /* Ensure trailing newline for stream output */
-            if (resplen > 0 && g_resp[resplen - 1] != '\n')
-                printf("\n");
-        }
-        else
-        {
-            printf("Response too long for buffer\n");
-        }
+        /* Ensure trailing newline for stream output */
+        if (resplen > 0 && g_resp[resplen - 1] != '\n')
+            printf("\n");
+
+        if (g_trunc)
+            printf("[response truncated]\n");
     }
     else
     {
@@ -642,10 +713,13 @@ int bufsize;
 int echo;
 {
     int status, ch, pos, timeout;
+    int nlcnt;
 
     /* Initialize variables */
     pos = 0;
     timeout = 0;
+    nlcnt = 0;
+    g_trunc = 0;
 
     /* Clear buffer first */
     buffer[0] = 0;
@@ -666,6 +740,56 @@ int echo;
             while (status == 2 && pos < bufsize - 1)
             {
                 ch = inp(124) & 0x7F;
+
+                if (ch == '\r')
+                {
+                    status = inp(123);
+                    continue;
+                }
+
+                if (ch == '\n')
+                {
+                    nlcnt++;
+                    status = inp(123);
+                    continue;
+                }
+
+                if (nlcnt > 0)
+                {
+                    if (nlcnt == 1)
+                    {
+                        if (pos > 0 && buffer[pos - 1] != ' ' && ch != ' ' &&
+                            pos < bufsize - 1)
+                        {
+                            buffer[pos++] = ' ';
+                            if (echo)
+                                ch_wrtc(' ');
+                        }
+                    }
+                    else
+                    {
+                        if (pos > 0 && buffer[pos - 1] != '\n' && pos < bufsize - 1)
+                        {
+                            buffer[pos++] = '\n';
+                            if (echo)
+                                ch_wrtc('\n');
+                        }
+                        if (pos < bufsize - 1)
+                        {
+                            buffer[pos++] = '\n';
+                            if (echo)
+                                ch_wrtc('\n');
+                        }
+                    }
+                    nlcnt = 0;
+                }
+
+                if (pos >= bufsize - 1)
+                {
+                    g_trunc = 1;
+                    break;
+                }
+
                 buffer[pos++] = ch;
 
                 if (echo)
@@ -676,6 +800,8 @@ int echo;
                 /* Check if more data available in current chunk */
                 status = inp(123);
             }
+            if (status == 2 && pos >= bufsize - 1)
+                g_trunc = 1;
             timeout = 0;
         }
         else if (status == 0)
@@ -786,6 +912,7 @@ char *text;
 int ch_wrst()
 {
     g_col = 0;
+    g_soft = 0;
     g_wpos = 0;
     return 0;
 }
@@ -803,6 +930,7 @@ int ch_wrtf()
         x_cout('\r');
         x_cout('\n');
         g_col = 0;
+        g_soft = 0;
     }
 
     for (i = 0; i < g_wpos; i++)
@@ -810,7 +938,14 @@ int ch_wrtf()
         x_cout(g_wbuf[i]);
         g_col++;
         if (g_col >= LWIDTH)
-            g_col = 0;     /* terminal wrapped on its own */
+        {
+            x_cout('\r');
+            x_cout('\n');
+            g_col = 0;
+            g_soft = 1;
+        }
+        else
+            g_soft = 0;
     }
     g_wpos = 0;
     return 0;
@@ -825,9 +960,15 @@ int ch;
     if (ch == '\n')
     {
         ch_wrtf();
+        if (g_col == 0 && g_soft)
+        {
+            g_soft = 0;
+            return 0;
+        }
         x_cout('\r');
         x_cout('\n');
         g_col = 0;
+        g_soft = 0;
         return 0;
     }
     if (ch == '\r')
@@ -839,16 +980,29 @@ int ch;
     {
         ch_wrtf();
         if (g_col == 0)
+        {
+            g_soft = 0;
             return 0;       /* swallow leading space on a new line */
+        }
         if (g_col >= LWIDTH)
         {
             x_cout('\r');
             x_cout('\n');
             g_col = 0;
+            g_soft = 0;
             return 0;
         }
         x_cout(ch);
         g_col++;
+        if (g_col >= LWIDTH)
+        {
+            x_cout('\r');
+            x_cout('\n');
+            g_col = 0;
+            g_soft = 1;
+        }
+        else
+            g_soft = 0;
         return 0;
     }
 

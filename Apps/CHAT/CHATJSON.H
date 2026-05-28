@@ -11,7 +11,7 @@
 
 /* Message length limits */
 #define USR_LEN 256
-#define AST_LEN 2048
+#define AST_LEN 8192
 #define MSG_LEN AST_LEN  /* History rows use assistant-length capacity */
 
 /* Forward declaration */

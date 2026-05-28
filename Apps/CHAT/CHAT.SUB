@@ -43,6 +43,7 @@ era dxenv.*
 
 ft -g file://chat/chat.sys
 
+era a:chat.com
 a:pip a:chat.com=chat.com
 a:pip a:chat.sys=chat.sys
 
