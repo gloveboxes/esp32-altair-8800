@@ -18,4 +18,4 @@ managed_components/
 references/
 
 # Host runner runtime state
-local_altair/altair_env.txt
+altair_local/altair_env.txt

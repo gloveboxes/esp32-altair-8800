@@ -1,12 +1,17 @@
 #include "PortDrivers/time_io.h"
 
-#include "pico/stdlib.h"
-#include "pico/time.h"
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #define TIMER_0 0
 #define TIMER_1 1
@@ -16,17 +21,31 @@
 static uint64_t ms_timer_targets[NUM_MS_TIMERS] = {0, 0, 0};
 static uint16_t ms_timer_delays[NUM_MS_TIMERS] = {0, 0, 0};
 static uint64_t seconds_timer_target = 0;
-
-#if !defined(PICO_ON_DEVICE) || !PICO_ON_DEVICE
 static uint64_t emulator_start_ms = 0;
+
+/* Monotonic milliseconds since process start. */
+static uint64_t host_now_ms(void)
+{
+#ifdef _WIN32
+    static LARGE_INTEGER frequency;
+    LARGE_INTEGER now;
+
+    if (frequency.QuadPart == 0)
+    {
+        QueryPerformanceFrequency(&frequency);
+    }
+    QueryPerformanceCounter(&now);
+    return (uint64_t)((now.QuadPart * 1000ULL) / frequency.QuadPart);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 #endif
+}
 
 static inline uint64_t get_elapsed_ms(void)
 {
-#if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
-    return to_ms_since_boot(get_absolute_time());
-#else
-    uint64_t now_ms = to_ms_since_boot(get_absolute_time());
+    uint64_t now_ms = host_now_ms();
 
     if (now_ms < emulator_start_ms)
     {
@@ -34,10 +53,8 @@ static inline uint64_t get_elapsed_ms(void)
     }
 
     return now_ms - emulator_start_ms;
-#endif
 }
 
-#if !defined(PICO_ON_DEVICE) || !PICO_ON_DEVICE
 void time_reset(void)
 {
     for (int i = 0; i < NUM_MS_TIMERS; i++)
@@ -47,9 +64,8 @@ void time_reset(void)
     }
 
     seconds_timer_target = 0;
-    emulator_start_ms = to_ms_since_boot(get_absolute_time());
+    emulator_start_ms = host_now_ms();
 }
-#endif
 
 static int get_timer_index(int port)
 {

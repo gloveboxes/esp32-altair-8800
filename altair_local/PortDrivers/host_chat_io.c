@@ -1,5 +1,5 @@
 /*
- * Host-side implementation of chat_io.h for local_altair.
+ * Host-side implementation of chat_io.h for altair_local.
  *
  * Uses libcurl for the streaming chat completions request and a
  * background pthread so chat_input() can return characters as they arrive.

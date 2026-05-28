@@ -31,7 +31,7 @@ static const char *drive_b_path = LOCAL_RUNNER_REPO_ROOT "/disks/bdsc-v1.60.dsk"
 static const char *drive_c_path = LOCAL_RUNNER_REPO_ROOT "/disks/escape-posix.dsk";
 static const char *drive_d_path = LOCAL_RUNNER_REPO_ROOT "/disks/blank.dsk";
 static const char *apps_root_path = LOCAL_RUNNER_REPO_ROOT "/Apps";
-static const char *env_file_path = LOCAL_RUNNER_REPO_ROOT "/local_altair/altair_env.txt";
+static const char *env_file_path = LOCAL_RUNNER_REPO_ROOT "/altair_local/altair_env.txt";
 
 static void handle_signal(int signum)
 {

@@ -1,14 +1,11 @@
 #include "PortDrivers/utility_io.h"
 
-#include "pico/rand.h"
-#include "pico/time.h"
-
 #include "build_version.h"
 #include "wifi.h"
-#include "pico/unique_id.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 size_t utility_output(int port, uint8_t data, char* buffer, size_t buffer_length)
@@ -21,7 +18,9 @@ size_t utility_output(int port, uint8_t data, char* buffer, size_t buffer_length
             (void)data;
             if (buffer != NULL && buffer_length >= 2)
             {
-                uint16_t value = (uint16_t)get_rand_32();
+                /* 16 random bits split across two bytes. rand() is fine
+                   here - this port feeds CP/M userland games, not crypto. */
+                uint16_t value = (uint16_t)((rand() << 1) ^ rand());
                 buffer[0] = (char)(value & 0x00FF);
                 buffer[1] = (char)((value >> 8) & 0x00FF);
                 len = 2;
@@ -44,12 +43,9 @@ size_t utility_output(int port, uint8_t data, char* buffer, size_t buffer_length
                                                (ip && *ip) ? ip : "0.0.0.0");
                         break;
                     }
-                    case 2: {
-                        char id[64];
-                        pico_get_unique_board_id_string(id, sizeof(id));
-                        len = (size_t)snprintf(buffer, buffer_length, "%s", id);
+                    case 2:
+                        len = (size_t)snprintf(buffer, buffer_length, "LOCAL-ALTAIR");
                         break;
-                    }
                     default:
                         len = (size_t)snprintf(buffer, buffer_length, "unknown");
                         break;
@@ -60,7 +56,7 @@ size_t utility_output(int port, uint8_t data, char* buffer, size_t buffer_length
             (void)data;
             if (buffer != NULL && buffer_length > 0)
             {
-                len = (size_t)snprintf(buffer, buffer_length, "%s %d (%s %s)\n", PICO_BOARD, BUILD_VERSION, BUILD_DATE, BUILD_TIME);
+                len = (size_t)snprintf(buffer, buffer_length, "%s %d (%s %s)\n", BOARD_NAME, BUILD_VERSION, BUILD_DATE, BUILD_TIME);
             }
             break;
         default:

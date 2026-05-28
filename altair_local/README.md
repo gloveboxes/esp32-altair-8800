@@ -10,14 +10,14 @@ folder by default.
 ## Build
 
 ```sh
-cmake -S local_altair -B local_altair/build
-cmake --build local_altair/build
+cmake -S altair_local -B altair_local/build
+cmake --build altair_local/build
 ```
 
 ## Run
 
 ```sh
-./local_altair/build/altair-local
+./altair_local/build/altair-local
 ```
 
 There is also a VS Code task: **Altair: Start Local Altair** (configure +

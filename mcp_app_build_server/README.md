@@ -103,7 +103,7 @@ To build both Windows host tools together, use the shared helper from the repo r
 .\scripts\build-host-tools-windows.cmd
 ```
 
-That script builds both `local_altair` and `mcp_app_build_server` in the matching MSVC build directories.
+That script builds both `altair_local` and `mcp_app_build_server` in the matching MSVC build directories.
 
 Run from the `mcp_app_build_server` folder so the default disk paths resolve:
 

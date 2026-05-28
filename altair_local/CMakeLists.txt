@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
-project(altair_local_altair C)
+project(altair_local C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(CURL QUIET)
 find_package(Threads REQUIRED)

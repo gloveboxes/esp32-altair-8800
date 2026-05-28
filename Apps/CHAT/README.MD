@@ -8,7 +8,7 @@ and by the ESP-IDF HTTP client on the ESP32 firmware.
 All configuration is read from the Altair env store via the `ENV` app
 (set with `ENV NAME=value`) or, on the device, from the web config portal.
 Both sides share the NVS namespace `ENVIRONMENT` on the ESP32, and
-`local_altair/altair_env.txt` on the host emulator.
+`altair_local/altair_env.txt` on the host emulator.
 
 ## Required environment variables
 
@@ -20,12 +20,12 @@ Both sides share the NVS namespace `ENVIRONMENT` on the ESP32, and
 | `CHAT_ENDPOINT`    | `CHAT_PROVIDER=compatible` | Full URL, e.g. `http://192.168.1.20:11434/v1/chat/completions` |
 | `CHAT_OPENAI_KEY`  | `CHAT_PROVIDER=openai` (optional for `compatible`) | Bearer token sent in the `Authorization` header |
 
-### Host emulator (`local_altair/PortDrivers/host_chat_io.c`)
+### Host emulator (`altair_local/PortDrivers/host_chat_io.c`)
 
 The host emulator now honors the same `CHAT_PROVIDER` / `CHAT_ENDPOINT` /
 `CHAT_OPENAI_KEY` variables as the ESP32 firmware. The driver picks one URL
 at startup (logged as `[Chat] provider=... url=... key=...`). To change
-provider/endpoint, edit `local_altair/altair_env.txt` and relaunch
+provider/endpoint, edit `altair_local/altair_env.txt` and relaunch
 `altair-local`.
 
 ### Read by `CHAT.COM` itself (both platforms, via `e_get`)
@@ -51,7 +51,7 @@ A>CHAT
 ```
 
 The same `CHAT_OPENAI_KEY` name is used on both the ESP32 firmware and the
-host emulator (set it in `local_altair/altair_env.txt` for the host).
+host emulator (set it in `altair_local/altair_env.txt` for the host).
 
 ## Example: Ollama on the LAN
 

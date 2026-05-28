@@ -79,7 +79,7 @@
     {
       "label": "Altair: Start Local Altair",
       "type": "shell",
-      "command": "cmake -S local_altair -B local_altair/build && cmake --build local_altair/build && ./local_altair/build/altair-local",
+      "command": "cmake -S altair_local -B altair_local/build && cmake --build altair_local/build && ./altair_local/build/altair-local",
       "options": {
         "cwd": "${workspaceFolder}"
       },

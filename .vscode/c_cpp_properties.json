@@ -15,6 +15,18 @@
         ],
         "limitSymbolsToIncludedHeaders": true
       }
+    },
+    {
+      "name": "altair-local (host)",
+      "compileCommands": "${workspaceFolder}/altair_local/build/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}/altair_local",
+        "${workspaceFolder}/altair_local/PortDrivers",
+        "${workspaceFolder}/altair8800",
+        "${workspaceFolder}/port_drivers"
+      ],
+      "cStandard": "c11",
+      "intelliSenseMode": "${default}"
     }
   ],
   "version": 4
