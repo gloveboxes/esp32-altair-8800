@@ -25,6 +25,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #ifdef HAVE_LIBCURL
 #include <pthread.h>
@@ -126,9 +129,21 @@ static void    weather_wait_seconds_locked(int seconds);
 
 static int64_t weather_now_us(void)
 {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER counter;
+
+    if (freq.QuadPart == 0)
+    {
+        QueryPerformanceFrequency(&freq);
+    }
+    QueryPerformanceCounter(&counter);
+    return (int64_t)((counter.QuadPart * 1000000) / freq.QuadPart);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000 + (int64_t)ts.tv_nsec / 1000;
+#endif
 }
 
 static void weather_set_units_letter_locked(void)

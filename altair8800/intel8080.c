@@ -16,8 +16,13 @@
 #include "memory.h"
 
 // Performance optimization macros
+#if defined(__clang__) || defined(__GNUC__)
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LIKELY(x)   (!!(x))
+#define UNLIKELY(x) (!!(x))
+#endif
 #define CHECK_CARRY(a, b) ((a + b) > 0xff)
 #define CHECK_HALF_CARRY(a, b) (((a & 0xf) + (b & 0xf)) > 0xf)
 
