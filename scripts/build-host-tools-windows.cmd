@@ -3,10 +3,10 @@ setlocal
 
 rem Windows host builds can enable curl-backed chat/weather via vcpkg.
 rem Quick setup from PowerShell:
-rem   git clone https://github.com/microsoft/vcpkg %USERPROFILE%\vcpkg
-rem   & %USERPROFILE%\vcpkg\bootstrap-vcpkg.bat
-rem   & %USERPROFILE%\vcpkg\vcpkg install curl[ssl]:arm64-windows
-rem   & %USERPROFILE%\vcpkg\vcpkg install curl[ssl]:x64-windows
+rem   git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
+rem   & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
+rem   & $env:USERPROFILE\vcpkg\vcpkg install curl[ssl]:arm64-windows
+rem   & $env:USERPROFILE\vcpkg\vcpkg install curl[ssl]:x64-windows
 rem If vcpkg lives elsewhere, set VCPKG_ROOT before running this script.
 
 set "SCRIPT_DIR=%~dp0"
@@ -56,12 +56,12 @@ if defined VCPKG_ROOT (
 
 if not defined CMAKE_EXTRA_ARGS (
     echo vcpkg was not found. Building without libcurl support.
-    echo To enable chat and weather on Windows, install vcpkg and then run:
-    echo   git clone https://github.com/microsoft/vcpkg %%USERPROFILE%%\vcpkg
-    echo   %%USERPROFILE%%\vcpkg\bootstrap-vcpkg.bat
-    echo   %%USERPROFILE%%\vcpkg\vcpkg install curl[ssl]:arm64-windows
-    echo   %%USERPROFILE%%\vcpkg\vcpkg install curl[ssl]:x64-windows
-    echo   vcpkg install curl[ssl]:%VCPKG_TRIPLET%
+    echo To enable chat and weather on Windows from PowerShell, run:
+    echo   git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
+    echo   ^& $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
+    echo   ^& $env:USERPROFILE\vcpkg\vcpkg install curl[ssl]:arm64-windows
+    echo   ^& $env:USERPROFILE\vcpkg\vcpkg install curl[ssl]:x64-windows
+    echo Then rerun this script.
     echo and set VCPKG_ROOT if your vcpkg checkout is not in %%USERPROFILE%%\vcpkg, C:\vcpkg, or %REPO_ROOT%\vcpkg.
 ) else (
     if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include\curl\curl.h" (
