@@ -1,0 +1,20 @@
+services:
+  altair-local:
+    image: altair-local:dev
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: ${ALTAIR_ENV_FILE:-./altair_env.txt}
+        target: /opt/altair/runtime/altair_env.txt
+        read_only: true
+      - type: bind
+        source: ${ALTAIR_APPS_DIR:-../Apps}
+        target: /opt/altair/Apps
+        read_only: true
+      - type: bind
+        source: ${ALTAIR_DISKS_DIR:-../disks}
+        target: /opt/altair/disks

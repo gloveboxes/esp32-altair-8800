@@ -1,0 +1,16 @@
+.git
+.github
+.vscode
+build/
+build-*/
+managed_components/
+reference/
+references/
+altair_local/build/
+altair_mcp_server/build/
+host_tests/build/
+sdkconfig
+sdkconfig.old
+sdkconfig.freenove
+altair_local/altair_env.txt
+.DS_Store
