@@ -8,7 +8,7 @@ and `linux/arm64`.
 ## Build
 
 ```sh
-docker build -f docker/Dockerfile -t altair-local:dev .
+docker build -f docker/Dockerfile -t altair8800v2:latest .
 ```
 
 ## Build multi-architecture images
@@ -27,11 +27,11 @@ the multi-architecture manifest list to your Docker account.
 Optional environment variables:
 
 - `DOCKER_USER` sets the Docker Hub namespace when `DOCKER_IMAGE` is not provided.
-- `IMAGE_NAME` defaults to `altair-local`.
+- `IMAGE_NAME` defaults to `altair8800v2`.
 - `DOCKER_TAG` defaults to `latest`.
 - `DOCKER_IMAGE` overrides the fully-qualified image reference directly.
 - `PLATFORMS` defaults to `linux/amd64,linux/arm64`.
-- `BUILDER_NAME` defaults to `altair-local-multiarch`.
+- `BUILDER_NAME` defaults to `altair8800v2-multiarch`.
 - `DOCKERFILE` defaults to `docker/Dockerfile`.
 - `BUILD_CONTEXT` defaults to the repository root.
 
@@ -46,7 +46,7 @@ DOCKER_USER=your-dockerhub-user DOCKER_TAG=2026-05-28 ./docker/build-multiarch.s
 Example overriding the whole image reference directly:
 
 ```sh
-DOCKER_IMAGE=your-dockerhub-user/altair-local:2026-05-28 ./docker/build-multiarch.sh
+DOCKER_IMAGE=your-dockerhub-user/altair8800v2:2026-05-28 ./docker/build-multiarch.sh
 ```
 
 ## Run interactively
@@ -56,7 +56,7 @@ docker run --rm -it \
   -v "$PWD/docker/altair_env.txt:/opt/altair/runtime/altair_env.txt:ro" \
   -v "$PWD/Apps:/opt/altair/Apps:ro" \
   -v "$PWD/disks:/opt/altair/disks" \
-  altair-local:dev
+  altair8800v2:latest
 ```
 
 The entrypoint always passes explicit runtime paths:
@@ -77,7 +77,7 @@ docker run --rm -it \
   -v /absolute/path/to/altair_env.txt:/opt/altair/runtime/altair_env.txt:ro \
   -v /absolute/path/to/Apps:/opt/altair/Apps:ro \
   -v /absolute/path/to/disks:/opt/altair/disks \
-  altair-local:dev
+  altair8800v2:latest
 ```
 
 Example overriding only drive B while keeping the default disk directory mount:
@@ -88,7 +88,7 @@ docker run --rm -it \
   -v "$PWD/Apps:/opt/altair/Apps:ro" \
   -v "$PWD/disks:/opt/altair/disks" \
   -e ALTAIR_DRIVE_B=my-workbench.dsk \
-  altair-local:dev
+  altair8800v2:latest
 ```
 
 Example using a different Apps folder for FT without changing the container path:
@@ -98,7 +98,7 @@ docker run --rm -it \
   -v /absolute/path/to/other-apps:/opt/altair/Apps:ro \
   -v "$PWD/docker/altair_env.txt:/opt/altair/runtime/altair_env.txt:ro" \
   -v "$PWD/disks:/opt/altair/disks" \
-  altair-local:dev
+  altair8800v2:latest
 ```
 
 ## Compose
@@ -106,7 +106,7 @@ docker run --rm -it \
 `compose.yaml` is set up for interactive use:
 
 ```sh
-docker compose -f docker/compose.yaml run --rm altair-local
+docker compose -f docker/compose.yaml run --rm altair8800v2
 ```
 
 Override the mounted resources without editing the compose file:
@@ -115,7 +115,7 @@ Override the mounted resources without editing the compose file:
 ALTAIR_ENV_FILE=/absolute/path/to/altair_env.txt \
 ALTAIR_APPS_DIR=/absolute/path/to/Apps \
 ALTAIR_DISKS_DIR=/absolute/path/to/disks \
-docker compose -f docker/compose.yaml run --rm altair-local
+docker compose -f docker/compose.yaml run --rm altair8800v2
 ```
 
 ## Verify a single target platform locally
@@ -124,5 +124,5 @@ If you want to test one non-native Linux target before pushing a multi-arch imag
 build a single-platform image with buildx and load it into your local Docker image store:
 
 ```sh
-docker buildx build --platform linux/amd64 -f docker/Dockerfile -t altair-local:amd64 --load .
+docker buildx build --platform linux/amd64 -f docker/Dockerfile -t altair8800v2:amd64 --load .
 ```

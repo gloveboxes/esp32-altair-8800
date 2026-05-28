@@ -8,8 +8,8 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PLATFORMS=${PLATFORMS:-linux/amd64,linux/arm64}
 BUILD_CONTEXT=${BUILD_CONTEXT:-$REPO_ROOT}
 DOCKERFILE=${DOCKERFILE:-$SCRIPT_DIR/Dockerfile}
-BUILDER_NAME=${BUILDER_NAME:-altair-local-multiarch}
-IMAGE_NAME=${IMAGE_NAME:-altair-local}
+BUILDER_NAME=${BUILDER_NAME:-altair8800v2-multiarch}
+IMAGE_NAME=${IMAGE_NAME:-altair8800v2}
 DOCKER_TAG=${DOCKER_TAG:-latest}
 
 if [ -z "${DOCKER_IMAGE:-}" ]; then

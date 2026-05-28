@@ -1,6 +1,6 @@
 services:
-  altair-local:
-    image: altair-local:dev
+  altair8800v2:
+    image: altair8800v2:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
