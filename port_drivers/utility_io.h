@@ -5,6 +5,7 @@
  * Utility ports:
  * - Port 45: Random number generator (returns 2-byte random value)
  * - Port 48: System info (sub-codes: 0=hostname, 1=WiFi IP, 2=device ID)
+ * - Port 49: Reboot ESP32 (data byte must be magic 0xA5 to trigger)
  * - Port 70: Version information string
  */
 

@@ -5,6 +5,7 @@
  * Utility ports:
  * - Port 45: Random number generator (returns 2-byte random value)
  * - Port 48: System info (sub-codes: 0=hostname, 1=WiFi IP, 2=device ID)
+ * - Port 49: Reboot ESP32 (data byte must be magic 0xA5 to trigger)
  * - Port 70: Version information string
  */
 
@@ -14,6 +15,11 @@
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 #include "esp_mac.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#define UTILITY_REBOOT_MAGIC 0xA5
 
 #include "config.h"
 #include "wifi.h"
@@ -79,6 +85,15 @@ size_t utility_output(int port, uint8_t data, char* buffer, size_t buffer_length
             {
                 len = (size_t)snprintf(buffer, buffer_length, "ESP32-S3 Altair8800 (IDF %s)\n",
                                        esp_get_idf_version());
+            }
+            break;
+
+        case 49: // Reboot ESP32 (requires magic byte to avoid accidental triggers)
+            if (data == UTILITY_REBOOT_MAGIC)
+            {
+                /* Give the CP/M caller and UART a moment to flush before reset. */
+                vTaskDelay(pdMS_TO_TICKS(200));
+                esp_restart();
             }
             break;
 

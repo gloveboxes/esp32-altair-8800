@@ -29,6 +29,7 @@ int e_list();
 int e_set();
 int e_del();
 int bdos();
+int outp();
 int putchar();
 
 /* In-memory snapshot of the ESP32 environment. */
@@ -302,6 +303,28 @@ int n;
     return 0;
 }
 
+/* Ask the user and, on Y, send magic byte 0xA5 to port 49 to reboot
+   the ESP32. The 0xA5 guard prevents stray OUT 49 from rebooting. */
+int doboot()
+{
+    char buf[8];
+    int n;
+
+    printf("\r\nReboot ESP32? (y/N) ");
+    n = readln(buf, 8);
+    if (n < 0) {
+        printf("Cancelled.\r\n");
+        return 0;
+    }
+    if (buf[0] != 'y' && buf[0] != 'Y') {
+        printf("Cancelled.\r\n");
+        return 0;
+    }
+    printf("Rebooting ESP32...\r\n");
+    outp(49, 0xA5);
+    return 0;
+}
+
 /* Interactive editor entry point. */
 int imode()
 {
@@ -318,7 +341,7 @@ int imode()
 
     for (;;) {
         showvar();
-        printf("\r\n[number]=edit  A=add  D <n>=delete  N=next  P=prev  R=reload  Q=quit\r\n> ");
+        printf("\r\n[number]=edit  A=add  D <n>=delete  N=next  P=prev  L=reload  R=reboot  Q=quit\r\n> ");
 
         n = readln(line, LBUFSZ);
         if (n < 0) {
@@ -338,9 +361,13 @@ int imode()
             printf("Bye.\r\n");
             return 0;
         }
-        if (cmd == 'R') {
+        if (cmd == 'L') {
             loadall();
             fixpage();
+            continue;
+        }
+        if (cmd == 'R') {
+            doboot();
             continue;
         }
         if (cmd == 'N') {

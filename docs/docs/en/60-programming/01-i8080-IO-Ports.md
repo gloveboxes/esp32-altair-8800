@@ -6,209 +6,128 @@ The Intel 8080 CPU can address up to 256 input ports and 256 output ports; allow
 
 ## Altair emulator software-enabled ports
 
-The Altair emulator uses Intel 8080 IO ports to provide time services, random numbers, and access to cloud services.
+The Altair emulator uses Intel 8080 IO ports to provide time services, random numbers, system information, file transfer, persistent environment variables, weather data, and an OpenAI-compatible chat client.
 
 - You can access Intel 8080 IO ports from BASIC, C, and Assembly programming languages, and directly using Intel 8080 opcodes. See [Using Intel 8080 Input Output ports](#using-intel-8080-input-output-ports).
-- The Intel 8080 software-enabled IO ports are implemented in the [io_ports.c](https://github.com/gloveboxes/Altair8800.Emulator.UN-X/blob/main/src/io_ports.c){:target=_blank} file.
-- You can extend the Altair 8800 by adding additional IO port functions, for example, integrating machine learning capabilities.
+- I/O is routed by [port_drivers/io_ports.c](https://github.com/gloveboxes/esp32-altair-8800/blob/main/port_drivers/io_ports.c){:target=_blank} to per-feature drivers in the same folder (`time_io.c`, `utility_io.c`, `weather_io.c`, `files_io.c`, `environment_io.c`, `chat_io.c`).
+- You can extend the Altair 8800 by adding additional IO port functions — drop a new `*_io.c` driver into `port_drivers/` and route the port range from `io_ports.c`.
 
 ### Altair Emulator IO Port SDK
 
-Sample code in the **AppSamples/sdk** folder demonstrates how to use the IO port features via a C language SDK. For details, see the [SDK samples](https://github.com/gloveboxes/Altair-8800-Emulator/tree/main/src/AppSamples/sdk){:target=_blank}. These examples are also helpful for LLM-assisted development and [Vibe-Coding](01-Vibe-Coding.md) for C, Microsoft Basic, and Assembly programming.
+Sample code in the `Apps/SDK` folder demonstrates how to call these IO ports from BDS C. See for example `DXENV.C` (environment variables) and `DXTERM.C` (terminal helpers). These examples are also useful references for LLM-assisted development.
 
-### Output ports
+### Response read port
 
-The following tables show output port numbers and port data values. Typically, calling an output port will load data to be read via an input port.
+Many ports return a multi-byte string. The convention is:
 
-#### Utility output ports
+1. The CP/M program writes a request byte (or selector) to the output port for the feature.
+2. The driver fills an internal response buffer and the program reads bytes from **port 200** until a NUL (`0x00`) is returned.
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 24   | 0-255 | Set timer 0 period high byte (milliseconds) |
-| 25   | 0-255 | Set timer 0 period low byte (milliseconds) and start timer |
-| 26   | 0-255 | Set timer 1 period high byte (milliseconds) |
-| 27   | 0-255 | Set timer 1 period low byte (milliseconds) and start timer |
-| 28   | 0-255 | Set timer 2 period high byte (milliseconds) |
-| 29   | 0-255 | Set timer 2 period low byte (milliseconds) and start timer |
-| 30   | 0-255 | Set timer period in seconds |
-| 41   | 0     | System tick count |
-| 42   | 0     | Current [UTC](https://en.wikipedia.org/wiki/Coordinated_Universal_Time){:target=_blank} date and time |
-| 43   | 0     | Current local date and time |
-| 44   | 0     | Generates a random number between -32000 and 32000 |
-| 60   | 1     | Remote File Transfer (FT) command port - SET_FILENAME (1) |
-| 60   | 3     | Remote File Transfer (FT) command port - REQUEST_CHUNK (3) |
-| 60   | 4     | Remote File Transfer (FT) command port - CLOSE (4) |
-| 61   | ASCII | Remote File Transfer (FT) data port - filename characters (null-terminated) |
-| 109  | 0     | set getfile (gf) custom endpoint url index to 0. Should be called before setting the custom endpoint url. |
-| 110   | ASCII | Set getfile (gf) custom endpoint url |
-| 111   | 0 | Load getfile (gf) custom endpoint url |
-| 114   | ASCII | Set web request file name and call on NULL |
+| Port | Direction | Description |
+|------|-----------|-------------|
+| 200  | IN        | Read next byte of the most recently loaded response. NUL terminates. |
 
-### Input ports
+### Timer ports (time_io)
 
-Typically, input ports will read data loaded by an output port.
+| Port | Dir | Port data | Loads |
+|------|-----|-----------|-------|
+| 24 | OUT | 0-255 | Set timer 0 period high byte (milliseconds) |
+| 25 | OUT | 0-255 | Set timer 0 period low byte (milliseconds) and start timer |
+| 26 | OUT | 0-255 | Set timer 1 period high byte (milliseconds) |
+| 27 | OUT | 0-255 | Set timer 1 period low byte (milliseconds) and start timer |
+| 28 | OUT | 0-255 | Set timer 2 period high byte (milliseconds) |
+| 29 | OUT | 0-255 | Set timer 2 period low byte (milliseconds) and start timer |
+| 30 | OUT | 0-255 | Set seconds timer period and start timer |
+| 24-29 | IN | -    | Query corresponding millisecond timer (non-zero while running, 0 when expired) |
+| 30 | IN  | -         | Query seconds timer (non-zero while running, 0 when expired) |
 
-| Port | Description |
-|------|-------------|
-| 24   | Query timer 0 milliseconds status. Enabled or expired (true or false) |
-| 25   | Query timer 0 milliseconds status. Enabled or expired (true or false) |
-| 26   | Query timer 1 milliseconds status. Enabled or expired (true or false) |
-| 27   | Query timer 1 milliseconds status. Enabled or expired (true or false) |
-| 28   | Query timer 2 milliseconds status. Enabled or expired (true or false) |
-| 29   | Query timer 2 milliseconds status. Enabled or expired (true or false) |
-| 30   | Query seconds timer status. Enabled or expired (true or false) |
-| 31   | Query publish JSON pending status. Enabled or expired (true or false) |
-| 32   | Query publish weather pending status. Enabled or expired (true or false) |
-| 60   | Remote File Transfer (FT) status port - IDLE(0), DATA_READY(1), EOF(2), BUSY(3), ERROR(255) |
-| 61   | Remote File Transfer (FT) data port - read count byte or file data |
-| 69  | Is network ready |
-| 200  | Read loaded byte stream |
-| 201  | Read webget file stream |
-| 123  | Read OpenAi ChatGPT stream |
-| 120  | Read OpenAI streaming status |
-| 121  | Read OpenAI message |
-| 122  | Read OpenAI finished status |
+### Wall clock and date ports (time_io)
 
-#### Weather ports
+The wall clock requires Wi-Fi and a successful SNTP sync. Before sync these ports return a `+<seconds>s` boot-relative fallback.
 
-| Port | Port data | Loads |
-|------|------|:---------|
-| 34   | 0    | "Celsius" string literal |
-| 34   | 1    | "Millibar" string literal |
-| 34   | 2    | "Humidity %" string literal |
-| 34   | 3    | "Wind km/h" string literal |
-| 34   | 4    | "Wind degrees" string literal |
-| 34   | 5    | "Observation" string literal |
-| 35   | 0    | Temperature (Note 1) |
-| 35   | 1    | Pressure (Note 1) |
-| 35   | 2    | Relative humidity (Note 1) |
-| 35   | 3    | Wind speed (Note 1) |
-| 35   | 4    | Wind direction (Note 1) |
-| 35   | 5    | Weather observation (Note 1) |
+| Port | Dir | Port data | Loads (read with port 200) |
+|------|-----|-----------|----------------------------|
+| 41 | OUT | 0 | Seconds since boot, e.g. `12345` |
+| 42 | OUT | 0 | UTC date/time, ISO 8601 (`YYYY-MM-DDTHH:MM:SSZ`) |
+| 43 | OUT | 0 | Local date/time using configured timezone, ISO 8601 |
+| 44 | OUT | 0 | Local long date, e.g. `Thursday, 21 May 2026` |
 
-#### Location ports
+### Utility ports (utility_io)
 
-| Port | Port data | Loads |
-|------|------|:---------|
-| 36   | 0    | "Latitude" string literal |
-| 36   | 1    | "Longitude" string literal |
-| 36   | 2    | "Longitude" string literal |
-| 36   | 3    | "City" string literal |
-| 37   | 0    | Latitude (Note 2) |
-| 37   | 1    | Longitude (Note 2) |
-| 37   | 2    | Country name (Note 2) |
-| 37   | 3    | City name (Note 2) |
+| Port | Dir | Port data | Loads (read with port 200 unless noted) |
+|------|-----|-----------|-----------------------------------------|
+| 45 | OUT | 0   | Random number (2 bytes: low, high) on port 200 |
+| 48 | OUT | 0   | Wi-Fi DHCP hostname string |
+| 48 | OUT | 1   | Wi-Fi IPv4 address string |
+| 48 | OUT | 2   | Device ID (MAC address) string |
+| 49 | OUT | 0xA5 | **Reboot the ESP32.** Any other data byte is ignored. |
+| 70 | OUT | 0   | Firmware version string, e.g. `ESP32-S3 Altair8800 (IDF v6.0.1)` |
 
-#### Pollution ports
+### Weather ports (weather_io)
 
-| Port | Port data | Loads |
-|------|------|:---------|
-| 38   | 0    | "AQI(CAQI)" string literal |
-| 38   | 1    | "CO" string literal |
-| 38   | 2    | "NO" string literal |
-| 38   | 3    | "NO2" string literal |
-| 38   | 4    | "O3" string literal |
-| 38   | 5    | "SO2" string literal |
-| 38   | 6    | "NH3" string literal |
-| 38   | 7    | "PM2.5" string literal |
-| 38   | 8    | "PM1.0" string literal |
-| 39   | 0    | Air quality index (Note 1) |
-| 39   | 1    | Carbon monoxide level (Note 1) |
-| 39   | 2    | Nitrogen monoxide level (Note 1) |
-| 39   | 3    | Nitrogen dioxide level (Note 1) |
-| 39   | 4    | Ozone level (Note 1) |
-| 39   | 5    | Sulphur dioxide level (Note 1) |
-| 39   | 6    | Ammonia level (Note 1) |
-| 39   | 7    | Particulate matter 2.5 level (Note 1) |
-| 39   | 8    | Particulate matter 1.0 level (Note 1) |
+Requires an OpenWeatherMap API key and location set via the `ENV` app (keys `WEATHER_API_KEY`, `WEATHER_LOCATION`, `WEATHER_UNITS`). A background task refreshes data approximately every 20 minutes.
 
-#### 8x8 LED Panels
+| Port | Dir | Port data | Loads |
+|------|-----|-----------|-------|
+| 46 | OUT | 0 | City |
+| 46 | OUT | 1 | Current conditions main, e.g. `Rain` |
+| 46 | OUT | 2 | Current conditions description |
+| 46 | OUT | 3 | Current temperature |
+| 46 | OUT | 4 | Current humidity |
+| 46 | OUT | 5 | Current wind |
+| 46 | OUT | 6 | Forecast main |
+| 46 | OUT | 7 | Forecast description |
+| 46 | OUT | 8 | Forecast temperature |
+| 46 | OUT | 9 | Forecast valid-at time |
+| 46 | OUT | 10 | Age of the last fetch in seconds |
+| 47 | IN  | -  | Status: 0 = no data, 1 = fetching, 2 = ready, 3 = error |
 
-- Pi Sense HAT
-- Mikroe Retro 8800 Click
+Selected field is read byte-by-byte from port 200 until a NUL is returned.
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 65   | 0..8   | Power management LED brightness |
+### Remote file transfer ports (files_io)
 
-#### General ports
+The Altair emulator can pull files from a remote FT server (or from the bundled MCP server) over Wi-Fi. The `FT` CP/M command on drive B: wraps these ports.
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 70   | 0     | Loads Altair emulator version number |
+| Port | Dir | Port data | Loads |
+|------|-----|-----------|-------|
+| 60 | OUT | 1 | `SET_FILENAME` — start a new filename transfer on port 61 |
+| 60 | OUT | 3 | `REQUEST_CHUNK` — request next 256-byte data chunk |
+| 60 | OUT | 4 | `CLOSE` — close the current transfer |
+| 61 | OUT | ASCII | Filename character (NUL-terminated) |
+| 60 | IN  | -  | Status: 0 = idle, 1 = data ready, 2 = EOF, 3 = busy, 255 = error |
+| 61 | IN  | -  | Chunk byte (or leading count byte, per FT protocol) |
 
-#### Display 8x8 LED panel ports
+### Environment variable ports (environment_io)
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 80   | 0, 1, 2 | 0 = Bus mode, 1 = Font mode, 2 = Bitmap mode
-| 81   | 0, 1, 2 | 8x8 LED Panel RGB color. 0 = Red, 1 = Green, 2 = Blue |
-| 82   | 0..255 | Set 8x8 LED Panel Red palette |
-| 83   | 0..255 | Set 8x8 LED Panel Green palette |
-| 84   | 0..255 | Set 8x8 LED Panel Blue palette |
-| 85   | 0..255 | Display ASCII character |
-| 90   | 0..255 | Set row 0 bitmap |
-| 91   | 0..255 | Set row 1 bitmap |
-| 92   | 0..255 | Set row 2 bitmap |
-| 93   | 0..255 | Set row 3 bitmap |
-| 94   | 0..255 | Set row 4 bitmap |
-| 95   | 0..255 | Set row 5 bitmap |
-| 96   | 0..255 | Set row 6 bitmap |
-| 97   | 0..255 | Set row 7 bitmap |
-| 98   | 0..63 | Turn pixel n on |
-| 99   | 0..63 | Turn pixel n off |
-| 100   | 0..63 | Pixel flip |
-| 101   | 0 | Clear, turn all pixels off |
-| 102   | 0 | Draw bitmap |
+Persistent key/value storage backed by ESP32 NVS. The `ENV` CP/M command and the `DXENV.C` SDK wrapper use these ports.
 
-#### OpenAI ChatGPT
+| Port | Dir | Port data | Loads |
+|------|-----|-----------|-------|
+| 71 | OUT | 0 | Reset request buffer |
+| 71 | OUT | 1 | INIT — open NVS namespace |
+| 71 | OUT | 2 | GET — request preceded by `key\0` on port 72; reply on port 200 |
+| 71 | OUT | 3 | SET — request preceded by `key\0value\0` on port 72 |
+| 71 | OUT | 4 | DELETE — request preceded by `key\0` on port 72 |
+| 71 | OUT | 5 | LIST — list all key/value pairs on port 200 |
+| 71 | OUT | 6 | COUNT — number of entries on port 200 |
+| 71 | OUT | 7 | CLEAR — delete all entries |
+| 71 | OUT | 8 | EXISTS — request preceded by `key\0` on port 72 |
+| 71 | OUT | 9 | EXECUTE — run a CLI command line previously written to port 72 |
+| 72 | OUT | ASCII | Append byte to request buffer |
+| 71 | IN  | -  | Last status code: 0 = OK, -1 open, -2 read, -3 write, -4 full, -5 not found |
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 120   | 0..255 | Set system Message |
-| 121   | 0..255 | Set user message |
-| 122   | 0..255 | Set assistant message|
-| 123   | 0 | Clear all messages |
-| 124   | 0 | Load ChatGPT stream |
+### OpenAI-compatible chat ports (chat_io)
 
-#### Publish to Azure IoT ports
+Requires `CHAT_OPENAI_KEY` (and optionally `CHAT_OPENAI_URL`, `CHAT_OPENAI_MODEL`, `CHAT_SYSTEM_PROMPT`) set via the `ENV` app.
 
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 31   | ASCII | Publish JSON to IoT Hub/Central (Max 256 characters) (Note 3) |
-| 32   | 0 | Publish weather and pollution data to IoT Hub/Central (Note 3) |
-
-#### Azure Sphere specific ports
-
-| Port | Port data  | Loads |
-|------|-------|:---------|
-| 62   | 0      | Select Red LED |
-| 62   | 1      | Select Green LED |
-| 62   | 2      | Select Blue LED |
-| 63   | 0      | Loads onboard temperature |
-| 63   | 1      | Loads onboard pressure |
-| 63   | 2      | Loads onboard light sensor |
-| 64   | 0      | Loads accelerometer X axis |
-| 64   | 1      | Loads accelerometer Y axis |
-| 64   | 2      | Loads accelerometer Z axis |
-| 64   | 3      | Start the accelerometer timer|
-| 64   | 4      | Stop the accelerometer timer |
-| 64   | 5      | One-off accelerometer reading |
-| 64   | 6      | Calibrate accelerometer for angular rate|
-| 64   | 7      | Load accelerometer for angular rate |
-| 64   | 8      | Get latest movement inference result |
-| 66   | 0      | Power management disable |
-| 66   | 1      | Power management enable |
-| 66   | 2      | Power management sleep |
-| 67   | 1..255 | Power management wake from sleep (seconds) |
-| 71   | 0      | Get Azure Sphere OS version number |
-| 72   | 0      | Get first 8 characters of Azure Sphere device ID |
-
-**Notes.**
-
-1. Requires an Open Weather Map API Key, and an active internet connection.
-2. Requires an active internet connection to call the [geojs.io](https://get.geojs.io/v1/ip/geo.json){:target=_blank} web service.
-3. Requires an active internet connection and a free or paid tier or Azure IoT Central.
+| Port | Dir | Port data | Loads |
+|------|-----|-----------|-------|
+| 120 | OUT | 0 | Trigger / start a request |
+| 121 | OUT | ASCII | Append byte to the user request buffer |
+| 122 | OUT | 0 | Reset response state for the next streaming read |
+| 120 | IN  | -  | Trigger status (acknowledged) |
+| 123 | IN  | -  | Stream status: 0 = EOF, 1 = waiting, 2 = data ready |
+| 124 | IN  | -  | Next byte of streamed response when status = data ready |
 
 ## Using Intel 8080 Input Output ports
 
@@ -238,6 +157,28 @@ outp(30,1);      /* Enable delay for 1 second */
 while(inp(30));  /* Wait for delay to expire */
 ```
 
+#### Front panel: reboot the ESP32 in binary
+
+You can also drive ports directly from the Altair front panel (physical kit or the web virtual console) by toggling raw opcodes into memory. The four bytes below load `0xA5` into the accumulator, write it to port 49, and halt — which causes the ESP32 to restart.
+
+| Addr | Hex | Binary    | Mnemonic       | Meaning |
+|------|-----|-----------|----------------|---------|
+| 0000 | 3E  | 0011 1110 | `MVI A, data`  | Load next byte into A |
+| 0001 | A5  | 1010 0101 | data           | The reboot magic byte (0xA5) |
+| 0002 | D3  | 1101 0011 | `OUT port`     | Output A to next byte's port |
+| 0003 | 31  | 0011 0001 | port           | Port 49 (`31h`) — reboot |
+| 0004 | 76  | 0111 0110 | `HLT`          | Halt (never reached; ESP32 resets) |
+
+Front panel sequence:
+
+1. Set the address switches to `0000 0000 0000 0000` and press `EXAMINE`.
+2. For each of the five bytes above, set the data switches to the binary value and press `DEPOSIT NEXT` (the first byte uses plain `DEPOSIT`).
+3. Set address back to `0000 0000 0000 0000`, press `EXAMINE`, then `RUN`.
+
+The ESP32 reboots almost immediately after the `OUT 31h` is executed.
+
+> **Tip:** the same reboot is available without toggling switches by running the `ENV` app on CP/M drive A: and choosing the `R` (Reboot) menu option.
+
 ### BASIC access to Intel 8080 IO Ports
 
 The following BASIC code demonstrates the use of the Intel 8080 IO port 30 timer. The code sets a 1-second delay, and then waits for the timer to expire. This is a snippet of the **COUNT.BAS** sample included on drive A: of the Altair emulator.
@@ -253,55 +194,48 @@ The following BASIC code demonstrates the use of the Intel 8080 IO port 30 timer
 
 #### Weather IO ports
 
-The following BASIC code demonstrates the use of Intel 8080 output port 35 to load the current temperature, and the input port to read the temperature. This is a snippet of the **WEATHER.BAS** sample included on drive A: of the Altair emulator.
+The following BASIC code selects the current temperature field on port 46 and then reads the string from port 200 byte-by-byte until a NUL is returned. The OpenWeatherMap API key and location must be configured first using the `ENV` CP/M app.
 
 ```BASIC
-500 PORT = 34 : REM Set the output port number
-510 PDATA = 0 : REM Set the port data value to 0 for temperature
-520 GOSUB 4800 : REM Loads the temperature and then reads the temperature string
+500 PORT = 46 : REM Weather field selector port
+510 PDATA = 3 : REM 3 = current temperature
+520 GOSUB 4800 : REM Loads the field, then reads it as a string
 530 PRINT RSTRING$
 540 END
 
 4800 REM SUBROUTINE READS STRING DATA FROM PORT UNTIL NULL CHARACTER
 4900 OUT PORT, PDATA
 5000 RSTRING$ = ""
-5100 C=INP(200) : REM Read the temperature character by character until NULL returned
+5100 C=INP(200) : REM Read characters until NULL returned
 5200 IF C = 0 THEN RETURN
 5300 RSTRING$ = RSTRING$ + CHR$(C)
 5400 GOTO 5100
 ```
 
-#### Font support
+#### System info IO ports
 
-The following example shows how to use the Intel 8080 IO ports to display characters on the Pi Sense HAT or Retro Click 8x8 LED panels. To understand IO ports, refer to the [io_ports.c](https://github.com/gloveboxes/Altair8800.Emulator.UN-X/blob/main/src/io_ports.c){:target=_blank} source code. This example is included on drive A: in a file named **FONT.BAS**.
-
-```basic
-100 REM 8x8 LED Panel Demo
-200 OUT 80,1 : REM Flip the 8x8 LED panel to FONT mode
-300 FOR J = 1 TO 10
-400 FOR I = 33 TO 122
-500 OUT 81, I MOD 3 : REM Cycle font color
-600 OUT 85, I : REM Display character on the 8x8 LED panel
-700 PRINT CHR$(I)
-800 OUT 29, 250 : WAIT 29, 1, 1 : REM Pause for 250 milliseconds
-900 NEXT I
-1000 NEXT J
-1100 OUT 80,0
-```
-
-#### Azure Sphere Blinky
-
-The following example shows how to use the Intel 8080 IO ports to cycle through RGB LEDs on an Azure Sphere. To understand how IO ports are implemented, refer to the [io_ports.c](https://github.com/gloveboxes/Altair8800.Emulator.UN-X/blob/main/src/io_ports.c){:target=_blank} source code.
+The following BASIC reads the device's Wi-Fi IP address (port 48 selector 1):
 
 ```basic
-5 OUT 80, 1 : REM switch display to font mode
-10 WHILE 1=1 : REM Loop forever
-20 OUT 62, 0 : REM select red LED
-30 OUT 29, 250 : WAIT 29, 1, 1 : REM delay 250 milliseconds
-40 OUT 62, 1 : REM select green LED
-50 OUT 29, 250 : WAIT 29, 1, 1 : REM delay 250 milliseconds
-60 OUT 62, 2 : REM select blue LED
-70 OUT 29, 250 : WAIT 29, 1, 1 : REM delay 250 milliseconds
-80 WEND
-90 OUT 80, 0 : REM switch display to bus mode
+100 OUT 48, 1
+110 S$ = ""
+120 C = INP(200)
+130 IF C = 0 THEN GOTO 200
+140 S$ = S$ + CHR$(C)
+150 GOTO 120
+200 PRINT "IP = "; S$
 ```
+
+#### Reboot the ESP32
+
+CP/M cannot rebuild the host on its own — port 49 with the magic byte `0xA5` (165 decimal) triggers an `esp_restart()`. Any other data byte is ignored, so accidental writes are safe.
+
+```c
+outp(49, 0xA5);   /* Reboot the ESP32 after the current OUT completes. */
+```
+
+```basic
+10 OUT 49, 165   : REM 0xA5 — reboot the ESP32
+```
+
+The `ENV` CP/M app exposes this as the `R` (Reboot) menu option with a `y/N` confirmation prompt.
