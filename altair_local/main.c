@@ -7,8 +7,10 @@
 #include "PortDrivers/time_io.h"
 #include "PortDrivers/weather_io.h"
 #include "ansi_input.h"
+#include "cpu_state.h"
 #include "host_platform.h"
 #include "io_ports.h"
+#include "virtual_monitor.h"
 
 #include <signal.h>
 #include <stdbool.h>
@@ -19,12 +21,22 @@
 
 #define ASCII_MASK_7BIT 0x7f
 
+/* Same byte the web terminal sends for Ctrl+M on the ESP firmware
+   (see main/main.c). Distinct from CR so it can be routed through the
+   normal terminal pipeline without losing Enter. On a host TTY this is
+   produced by Ctrl+\. */
+#define CPU_MONITOR_TOGGLE_CHAR 0x1c
+
 #ifndef LOCAL_RUNNER_REPO_ROOT
 #define LOCAL_RUNNER_REPO_ROOT ".."
 #endif
 
-static intel8080_t cpu;
+static disk_controller_t g_disk_controller;
+static bool g_disk_controller_ready = false;
 static volatile sig_atomic_t keep_running = 1;
+
+static void terminal_write(uint8_t c);
+static uint8_t sense_switches(void);
 
 static const char *drive_a_path = LOCAL_RUNNER_REPO_ROOT "/disks/cpm63k.dsk";
 static const char *drive_b_path = LOCAL_RUNNER_REPO_ROOT "/disks/bdsc-v1.60.dsk";
@@ -57,12 +69,31 @@ static uint8_t terminal_read(void)
         keep_running = 0;
         return 0x00;
     }
+    if (ch == CPU_MONITOR_TOGGLE_CHAR)
+    {
+        cpu_state_toggle_mode();
+        return 0x00;
+    }
     ch = ansi_input_process(ch, host_monotonic_ms());
     if (ch == '\n')
     {
         return '\r';
     }
     return ch;
+}
+
+void altair_reset(void)
+{
+    if (!g_disk_controller_ready)
+    {
+        return;
+    }
+    memset(memory, 0x00, 64 * 1024);
+    loadDiskLoader(0xff00);
+    i8080_reset(&cpu, terminal_read, terminal_write, sense_switches,
+                &g_disk_controller, io_port_in, io_port_out);
+    i8080_examine(&cpu, 0xff00);
+    bus_switches = cpu.address_bus;
 }
 
 static void terminal_write(uint8_t c)
@@ -142,8 +173,6 @@ static bool parse_args(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-    disk_controller_t controller;
-
     if (!parse_args(argc, argv))
     {
         return argc > 1 ? 1 : 0;
@@ -156,6 +185,8 @@ int main(int argc, char **argv)
     environment_io_init(env_file_path);
     chat_io_init();
     weather_io_init();
+
+    fprintf(stderr, "[altair-local] Ctrl+\\ toggles the CPU monitor, Ctrl+] exits.\n");
 
     if (!host_terminal_configure())
     {
@@ -172,17 +203,37 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    controller = host_disk_controller();
+    g_disk_controller = host_disk_controller();
+    g_disk_controller_ready = true;
 
     memset(memory, 0x00, 64 * 1024);
     loadDiskLoader(0xff00);
     time_reset();
-    i8080_reset(&cpu, terminal_read, terminal_write, sense_switches, &controller, io_port_in, io_port_out);
+    i8080_reset(&cpu, terminal_read, terminal_write, sense_switches,
+                &g_disk_controller, io_port_in, io_port_out);
     i8080_examine(&cpu, 0xff00);
+    bus_switches = cpu.address_bus;
+    cpu_state_set_mode(CPU_RUNNING);
 
     while (keep_running)
     {
-        i8080_cycle(&cpu);
+        if (cpu_state_get_mode() == CPU_RUNNING)
+        {
+            for (int i = 0; i < 4000 && keep_running; ++i)
+            {
+                i8080_cycle(&cpu);
+            }
+        }
+        else
+        {
+            /* Stopped: terminal_read() returns 0 for the toggle byte,
+               so any non-zero byte here is a monitor character. */
+            uint8_t ch = terminal_read();
+            if (ch != 0x00)
+            {
+                process_control_panel_commands_char(ch);
+            }
+        }
     }
 
     host_disk_close();

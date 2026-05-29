@@ -14,6 +14,10 @@ WORKDIR /src
 COPY altair_local/ altair_local/
 COPY altair8800/ altair8800/
 COPY port_drivers/ port_drivers/
+# altair_local shares i8080_disasm.c / cpu_state.c from main/ and
+# virtual_monitor.c from front_panel/ (see altair_local/CMakeLists.txt).
+COPY main/ main/
+COPY front_panel/ front_panel/
 COPY disks/ disks/
 COPY Apps/ Apps/
 
