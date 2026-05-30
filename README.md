@@ -92,6 +92,36 @@ Terminal page: http://<device-ip>/
 
 The WebSocket console bridges browser input/output with the emulator terminal. On the AXS15231B build, output is mirrored to the on-device VT100 display and the browser terminal.
 
+### Architecture and Data Flow
+
+The console is split across the two CPU cores. The Intel 8080 emulator runs on Core 1; all networking (the `esp_http_server` httpd task and the dedicated TX task) runs on Core 0. Cross-core hand-off uses FreeRTOS primitives, and the steady-state data path performs no heap allocation.
+
+```mermaid
+graph TB
+    CPU["Intel 8080 CPU - Core 1"]
+    Browser["Browser terminal - xterm.js"]
+
+    Enq["Output callback + enqueue<br/>websocket_console_enqueue_output"]
+    TXStream["s_tx_stream StreamBuffer 1024B"]
+    TXTask["tx_task + broadcast - Core 0<br/>websocket_server_broadcast"]
+    SendWork["httpd send - websocket_send_work<br/>httpd_ws_send_frame_async"]
+    RxHandler["ws_handler + handle_rx - httpd<br/>terminal_input queue"]
+
+    CPU -->|output byte| Enq
+    Enq -->|xStreamBufferSend - drop newest if full| TXStream
+    TXStream -->|256B batches| TXTask
+    TXTask -->|httpd_queue_work| SendWork
+    SendWork -.->|gives s_send_done - buffer free| TXTask
+    SendWork -->|WS frame| Browser
+    Browser -->|WS data frame| RxHandler
+    RxHandler -->|terminal_input_enqueue / dequeued in loop| CPU
+```
+
+Send path (emulator → browser): the 8080 output callback pushes each byte into the `s_tx_stream` StreamBuffer (single writer = emulator, single reader = TX task). A 10 ms timer wakes `tx_task`, which drains the buffer in 256-byte batches and calls `websocket_server_broadcast()`. Broadcast takes the `s_send_done` "buffer free" token, copies into the single static `s_send_work` buffer, and queues `websocket_send_work()` onto the httpd task, which performs the actual `httpd_ws_send_frame_async()`. When the send completes it gives `s_send_done` back, providing natural backpressure (one frame in flight at a time) without any per-send `malloc`.
+
+Receive path (browser → emulator): inbound WebSocket frames are handled by `ws_handler` on the httpd task, read into a 256-byte stack buffer (heap only for a rare larger paste), and pushed via `websocket_console_handle_rx()` into the shared `terminal_input` queue. The emulator loop on Core 1 dequeues from that same queue, so browser keystrokes and BLE-keyboard input share a single consumer.
+
+
 ## Project Structure
 
 ```text
