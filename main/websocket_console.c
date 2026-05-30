@@ -27,11 +27,14 @@ static const char* TAG = "WS_Console";
 #define WS_TX_QUEUE_DEPTH   4096   // Output to WebSocket client - large for fast output
 
 // Maximum bytes to batch in a single WebSocket send
+// Diagnostic showed avg batch ~375B / 0 full at 50ms window, so 1024 is ample;
+// the timer window (not batch size) is the throughput lever for this workload.
 #define WS_TX_BATCH_SIZE    1024
 
 // Timer interval for batched output (microseconds)
-// 10ms for high throughput while still batching efficiently
-#define WS_TX_TIMER_INTERVAL_US  (10 * 1000)  // 10ms
+// 50ms lets more characters accumulate per frame so each WebSocket send
+// carries more payload relative to its fixed header/round-trip overhead.
+#define WS_TX_TIMER_INTERVAL_US  (50 * 1000)  // 50ms
 
 // Ping interval to keep WebSocket connections alive (microseconds)
 #define WS_PING_INTERVAL_US  (30 * 1000 * 1000)  // 30 seconds
@@ -87,10 +90,10 @@ static void tx_task(void* arg)
 {
     (void)arg;
     uint8_t buffer[WS_TX_BATCH_SIZE];
-    
+
     while (1) {
         // Wait for timer signal or timeout (for periodic check)
-        xSemaphoreTake(s_tx_sem, pdMS_TO_TICKS(20));
+        xSemaphoreTake(s_tx_sem, pdMS_TO_TICKS(WS_TX_TIMER_INTERVAL_US / 1000));
         
         if (!s_initialized || !s_tx_queue) {
             continue;
@@ -122,6 +125,7 @@ static void tx_task(void* arg)
 
         if (count > 0) {
             websocket_server_broadcast(buffer, count);
+
             // Yield to let other tasks run if we sent a full batch
             if (count == WS_TX_BATCH_SIZE) {
                 taskYIELD();
@@ -294,21 +298,6 @@ bool websocket_console_start_server(void)
     }
 
     return true;
-}
-
-void websocket_console_stop_server(void)
-{
-    // Stop the TX batching timer
-    if (s_tx_timer) {
-        esp_timer_stop(s_tx_timer);
-    }
-
-    // Stop the ping timer
-    if (s_ping_timer) {
-        esp_timer_stop(s_ping_timer);
-    }
-
-    websocket_server_stop();
 }
 
 bool websocket_console_has_clients(void)

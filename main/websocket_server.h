@@ -39,13 +39,6 @@ bool websocket_server_start(void);
 void websocket_server_stop(void);
 
 /**
- * @brief Check if server is running
- *
- * @return true if server is running
- */
-bool websocket_server_is_running(void);
-
-/**
  * @brief Get number of connected WebSocket clients (0 or 1)
  *
  * @return 1 if connected, 0 if not

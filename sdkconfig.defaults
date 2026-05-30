@@ -64,6 +64,10 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
 
 # Enable WebSocket support in HTTP server
 CONFIG_HTTPD_WS_SUPPORT=y
+# Invoke the URI handler's post-handshake callback after the WS handshake so we
+# can detect new connections (the handshake itself is consumed internally by
+# esp_http_server and never reaches the URI handler).
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
 
 # LwIP socket configuration - sized for two HTTP servers (captive portal + WebSocket)
 # HTTP server uses 3 sockets internally, so max_open_sockets must be <= (MAX_SOCKETS - 3)

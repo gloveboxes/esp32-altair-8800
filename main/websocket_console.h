@@ -37,11 +37,6 @@ void websocket_console_init(void);
 bool websocket_console_start_server(void);
 
 /**
- * @brief Stop the WebSocket server
- */
-void websocket_console_stop_server(void);
-
-/**
  * @brief Check if a WebSocket client is connected
  *
  * @return true if a client is connected

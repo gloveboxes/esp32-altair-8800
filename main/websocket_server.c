@@ -23,6 +23,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
@@ -32,11 +33,24 @@
 
 static const char* TAG = "WS_Server";
 
+// Maximum payload of a single WebSocket data frame. Must be >= the TX task's
+// drain batch (WS_TX_BATCH_SIZE in websocket_console.c, currently 1024).
+#define WS_SEND_BUF_SIZE 1024
+
 typedef struct {
     int fd;
     size_t len;
-    uint8_t data[];
+    uint8_t data[WS_SEND_BUF_SIZE];
 } ws_send_work_t;
+
+// Single statically-allocated send-work buffer. Output frames are produced by a
+// single TX task and sent one-at-a-time, so one buffer suffices and avoids a
+// per-chunk malloc (which could fail under heap pressure and silently drop
+// output). A plain static lands in internal SRAM (.bss), NOT PSRAM, so the
+// memcpy below stays fast. s_send_done is a "buffer free" token: it is taken
+// before filling the buffer and given back when the httpd task finishes.
+static ws_send_work_t s_send_work;
+static SemaphoreHandle_t s_send_done = NULL;
 
 // Track consecutive ping failures to detect dead connections
 static int s_ping_failures = 0;
@@ -82,33 +96,43 @@ static esp_err_t root_handler(httpd_req_t* req)
 }
 
 /**
- * @brief WebSocket handler for terminal I/O
+ * @brief Post-handshake callback for the WebSocket URI.
+ *
+ * In esp_http_server the WebSocket handshake (the HTTP GET upgrade) is consumed
+ * internally and the URI handler is NEVER invoked for it - the handler only
+ * runs for subsequent data frames. Connection detection must therefore happen
+ * here, immediately after the handshake completes, while we still have the
+ * request (and thus the socket fd) for the freshly-connected client. This
+ * requires CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y.
+ */
+static esp_err_t ws_post_handshake_cb(httpd_req_t* req)
+{
+    int new_fd = httpd_req_to_sockfd(req);
+    int old_fd = s_client_fd;
+
+    // Kick existing client if any (new connection takes over).
+    if (old_fd >= 0 && old_fd != new_fd) {
+        s_client_fd = -1;  // Clear before triggering close
+        httpd_sess_trigger_close(s_server, old_fd);
+    }
+
+    // Accept new client.
+    s_client_fd = new_fd;
+    ESP_LOGI(TAG, "WebSocket client connected (fd=%d)", new_fd);
+    websocket_console_on_connect();
+
+    // Set TCP_NODELAY for low latency.
+    int nodelay = 1;
+    setsockopt(new_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    return ESP_OK;
+}
+
+/**
+ * @brief WebSocket handler for terminal I/O (data frames only).
  */
 static esp_err_t ws_handler(httpd_req_t* req)
 {
-    // Handle WebSocket handshake
-    if (req->method == HTTP_GET) {
-        int new_fd = httpd_req_to_sockfd(req);
-        int old_fd = s_client_fd;
-
-        // Kick existing client if any (new connection takes over)
-        if (old_fd >= 0 && old_fd != new_fd) {
-            s_client_fd = -1;  // Clear before triggering close
-            httpd_sess_trigger_close(s_server, old_fd);
-        }
-
-        // Accept new client
-        s_client_fd = new_fd;
-        ESP_LOGI(TAG, "WebSocket client connected (fd=%d)", new_fd);
-        websocket_console_on_connect();
-
-        // Set TCP_NODELAY for low latency
-        int nodelay = 1;
-        setsockopt(new_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-
-        return ESP_OK;
-    }
-
     int frame_fd = httpd_req_to_sockfd(req);
     if (frame_fd >= 0 && frame_fd != s_client_fd) {
         ESP_LOGW(TAG, "Refreshing WebSocket client fd: %d -> %d", s_client_fd, frame_fd);
@@ -149,11 +173,21 @@ static esp_err_t ws_handler(httpd_req_t* req)
         return ESP_OK;
     }
 
-    // Allocate buffer for payload
-    uint8_t* buf = malloc(ws_pkt.len + 1);
-    if (!buf) {
-        ESP_LOGE(TAG, "Failed to allocate frame buffer");
-        return ESP_ERR_NO_MEM;
+    // Read the payload into a stack buffer for the common case (keystrokes and
+    // small pastes); fall back to heap only for a rare oversized frame. This
+    // keeps the steady-state RX path allocation-free.
+    uint8_t stackbuf[256];
+    uint8_t* buf;
+    bool heap_buf = false;
+    if (ws_pkt.len < sizeof(stackbuf)) {
+        buf = stackbuf;
+    } else {
+        buf = malloc(ws_pkt.len + 1);
+        if (!buf) {
+            ESP_LOGE(TAG, "Failed to allocate frame buffer");
+            return ESP_ERR_NO_MEM;
+        }
+        heap_buf = true;
     }
 
     ws_pkt.payload = buf;
@@ -165,7 +199,9 @@ static esp_err_t ws_handler(httpd_req_t* req)
             ESP_LOGE(TAG, "httpd_ws_recv_frame payload failed: %d (%s)", ret, esp_err_to_name(ret));
         }
         mark_client_disconnected(httpd_req_to_sockfd(req), "payload recv failed");
-        free(buf);
+        if (heap_buf) {
+            free(buf);
+        }
         return ret;
     }
 
@@ -191,7 +227,9 @@ static esp_err_t ws_handler(httpd_req_t* req)
             break;
     }
 
-    free(buf);
+    if (heap_buf) {
+        free(buf);
+    }
     return ESP_OK;
 }
 
@@ -233,6 +271,17 @@ bool websocket_server_start(void)
 
     s_client_fd = -1;
 
+    // Create the "buffer free" token for the single static send buffer and
+    // start it available (no send in flight yet).
+    if (!s_send_done) {
+        s_send_done = xSemaphoreCreateBinary();
+        if (!s_send_done) {
+            ESP_LOGE(TAG, "Failed to create send-done semaphore");
+            return false;
+        }
+        xSemaphoreGive(s_send_done);
+    }
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = WEBSOCKET_SERVER_PORT;
     config.ctrl_port = WEBSOCKET_SERVER_PORT + 1;
@@ -269,7 +318,8 @@ bool websocket_server_start(void)
         .method = HTTP_GET,
         .handler = ws_handler,
         .is_websocket = true,
-        .handle_ws_control_frames = true
+        .handle_ws_control_frames = true,
+        .ws_post_handshake_cb = ws_post_handshake_cb
     };
     httpd_register_uri_handler(s_server, &ws_uri);
 
@@ -285,11 +335,10 @@ void websocket_server_stop(void)
         s_client_fd = -1;
         ESP_LOGI(TAG, "Server stopped");
     }
-}
-
-bool websocket_server_is_running(void)
-{
-    return s_server != NULL;
+    if (s_send_done) {
+        vSemaphoreDelete(s_send_done);
+        s_send_done = NULL;
+    }
 }
 
 uint32_t websocket_server_get_client_count(void)
@@ -322,30 +371,38 @@ static void websocket_send_work(void *arg)
         }
     }
 
-    free(work);
+    // Release the shared buffer for the next broadcast.
+    if (s_send_done) {
+        xSemaphoreGive(s_send_done);
+    }
 }
 
 bool websocket_server_broadcast(const uint8_t* data, size_t len)
 {
     int fd = s_client_fd;
-    if (!s_server || fd < 0 || !data || len == 0) {
+    if (!s_server || fd < 0 || !data || len == 0 || !s_send_done) {
         return false;
     }
 
-    ws_send_work_t *work = malloc(sizeof(ws_send_work_t) + len);
-    if (!work) {
-        ESP_LOGW(TAG, "Failed to allocate WebSocket send work (%u bytes)", (unsigned)len);
-        return false;
+    if (len > WS_SEND_BUF_SIZE) {
+        len = WS_SEND_BUF_SIZE;
     }
 
-    work->fd = fd;
-    work->len = len;
-    memcpy(work->data, data, len);
+    // Wait for the previous send to complete so the static buffer can be reused.
+    // The bounded wait provides backpressure to the (single) TX task without
+    // letting a stalled httpd task or dead client block it forever.
+    if (xSemaphoreTake(s_send_done, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;  // previous send still in flight - drop this chunk
+    }
 
-    esp_err_t ret = httpd_queue_work(s_server, websocket_send_work, work);
+    s_send_work.fd = fd;
+    s_send_work.len = len;
+    memcpy(s_send_work.data, data, len);
+
+    esp_err_t ret = httpd_queue_work(s_server, websocket_send_work, &s_send_work);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to queue WebSocket send: %s", esp_err_to_name(ret));
-        free(work);
+        xSemaphoreGive(s_send_done);  // nothing queued - release buffer
         return false;
     }
 
