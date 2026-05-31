@@ -8,6 +8,16 @@
  * - Ports 28/29: Millisecond timer 2 (high/low byte of delay)
  * - Port 30: Seconds timer (single byte delay)
  *
+ * Stopwatch ports (passive elapsed-time counters):
+ * - Port 37: Stopwatch 0
+ * - Port 38: Stopwatch 1
+ * - Port 39: Stopwatch 2
+ *   OUT port, 0 -> start/reset the stopwatch (records current time)
+ *   OUT port, 1 -> latch elapsed seconds as a 4-byte unsigned
+ *                  long (big-endian, BDS C long layout)
+ *                  (read back via the request buffer, port 200) so an
+ *                  Altair app gets the value as an unsigned 32-bit count.
+ *
  * Time string ports (output):
  * - Port 41: Seconds since boot
  * - Port 42: UTC wall clock (ISO 8601 format)
@@ -31,9 +41,15 @@
 #define TIMER_2 2
 #define NUM_MS_TIMERS 3
 
+#define STOPWATCH_0 0
+#define STOPWATCH_1 1
+#define STOPWATCH_2 2
+#define NUM_STOPWATCHES 3
+
 static uint64_t ms_timer_targets[NUM_MS_TIMERS] = {0, 0, 0};
 static uint16_t ms_timer_delays[NUM_MS_TIMERS] = {0, 0, 0};
 static uint64_t seconds_timer_target = 0;
+static uint64_t stopwatch_start_ms[NUM_STOPWATCHES] = {0, 0, 0};
 
 /**
  * @brief Get elapsed milliseconds since boot using ESP-IDF timer
@@ -59,6 +75,24 @@ static int get_timer_index(int port)
         case 28:
         case 29:
             return TIMER_2;
+        default:
+            return -1;
+    }
+}
+
+/**
+ * @brief Map a stopwatch port number to a stopwatch index
+ */
+static int get_stopwatch_index(int port)
+{
+    switch (port)
+    {
+        case 37:
+            return STOPWATCH_0;
+        case 38:
+            return STOPWATCH_1;
+        case 39:
+            return STOPWATCH_2;
         default:
             return -1;
     }
@@ -168,6 +202,36 @@ size_t time_output(int port, uint8_t data, char* buffer, size_t buffer_length)
         case 30:
             seconds_timer_target = get_elapsed_ms() / 1000ULL + data;
             break;
+
+        // Stopwatches: data 0 starts/resets, data 1 latches elapsed seconds
+        case 37:
+        case 38:
+        case 39:
+        {
+            int sw_idx = get_stopwatch_index(port);
+            if (sw_idx >= 0 && sw_idx < NUM_STOPWATCHES)
+            {
+                if (data == 0)
+                {
+                    stopwatch_start_ms[sw_idx] = get_elapsed_ms();
+                }
+                else
+                {
+                    uint32_t elapsed = (uint32_t)((get_elapsed_ms() - stopwatch_start_ms[sw_idx]) / 1000ULL);
+                    if (buffer_length >= 4)
+                    {
+                        // Emit as a 4-byte big-endian value matching the
+                        // BDS C long layout (l[0] = MSB ... l[3] = LSB).
+                        buffer[0] = (uint8_t)((elapsed >> 24) & 0xFF);
+                        buffer[1] = (uint8_t)((elapsed >> 16) & 0xFF);
+                        buffer[2] = (uint8_t)((elapsed >> 8) & 0xFF);
+                        buffer[3] = (uint8_t)(elapsed & 0xFF);
+                        len = 4;
+                    }
+                }
+            }
+        }
+        break;
 
         // Seconds since boot
         case 41:

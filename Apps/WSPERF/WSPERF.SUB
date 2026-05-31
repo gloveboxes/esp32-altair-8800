@@ -1,0 +1,16 @@
+; Apps/WSPERF/WSPERF.SUB - driver for the WSPERF throughput test
+ft -g file://wsperf/wsperf.c
+ft -g file://sdk/long.c
+
+cc long
+cc wsperf
+
+clink wsperf long
+
+era a:wsperf.*
+a:pip a:wsperf.com=wsperf.com
+
+era long.*
+era wsperf.*
+
+mcpdone wsperf

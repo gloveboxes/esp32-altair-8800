@@ -18,9 +18,15 @@
 #define TIMER_2 2
 #define NUM_MS_TIMERS 3
 
+#define STOPWATCH_0 0
+#define STOPWATCH_1 1
+#define STOPWATCH_2 2
+#define NUM_STOPWATCHES 3
+
 static uint64_t ms_timer_targets[NUM_MS_TIMERS] = {0, 0, 0};
 static uint16_t ms_timer_delays[NUM_MS_TIMERS] = {0, 0, 0};
 static uint64_t seconds_timer_target = 0;
+static uint64_t stopwatch_start_ms[NUM_STOPWATCHES] = {0, 0, 0};
 static uint64_t emulator_start_ms = 0;
 
 /* Monotonic milliseconds since process start. */
@@ -65,6 +71,11 @@ void time_reset(void)
 
     seconds_timer_target = 0;
     emulator_start_ms = host_now_ms();
+
+    for (int i = 0; i < NUM_STOPWATCHES; i++)
+    {
+        stopwatch_start_ms[i] = 0;
+    }
 }
 
 static int get_timer_index(int port)
@@ -80,6 +91,21 @@ static int get_timer_index(int port)
         case 28:
         case 29:
             return TIMER_2;
+        default:
+            return -1;
+    }
+}
+
+static int get_stopwatch_index(int port)
+{
+    switch (port)
+    {
+        case 37:
+            return STOPWATCH_0;
+        case 38:
+            return STOPWATCH_1;
+        case 39:
+            return STOPWATCH_2;
         default:
             return -1;
     }
@@ -169,6 +195,34 @@ size_t time_output(int port, uint8_t data, char* buffer, size_t buffer_length)
         case 30:
             seconds_timer_target = get_elapsed_ms() / 1000ULL + data;
             break;
+        case 37:
+        case 38:
+        case 39:
+        {
+            int sw_idx = get_stopwatch_index(port);
+            if (sw_idx >= 0 && sw_idx < NUM_STOPWATCHES)
+            {
+                if (data == 0)
+                {
+                    stopwatch_start_ms[sw_idx] = get_elapsed_ms();
+                }
+                else
+                {
+                    uint32_t elapsed = (uint32_t)((get_elapsed_ms() - stopwatch_start_ms[sw_idx]) / 1000ULL);
+                    if (buffer_length >= 4)
+                    {
+                        /* Emit as a 4-byte big-endian value matching the
+                         * BDS C long layout (l[0] = MSB ... l[3] = LSB). */
+                        buffer[0] = (uint8_t)((elapsed >> 24) & 0xFF);
+                        buffer[1] = (uint8_t)((elapsed >> 16) & 0xFF);
+                        buffer[2] = (uint8_t)((elapsed >> 8) & 0xFF);
+                        buffer[3] = (uint8_t)(elapsed & 0xFF);
+                        len = 4;
+                    }
+                }
+            }
+        }
+        break;
         case 41:
             len = (size_t)snprintf(buffer, buffer_length, "%llu", (unsigned long long)(get_elapsed_ms() / 1000ULL));
             break;

@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "host_files_io.h"
+#include "time_io.h"
 #include "universal_88dcdd.h"
 
 #include "intel8080.h"
@@ -155,6 +156,10 @@ static size_t g_input_write = 0;
 static char g_output[OUTPUT_CAP];
 static size_t g_output_len = 0;
 
+static char g_port200_buffer[256];
+static size_t g_port200_len = 0;
+static size_t g_port200_count = 0;
+
 static uint8_t terminal_read(void)
 {
     uint8_t ch;
@@ -187,6 +192,17 @@ static uint8_t io_port_in(uint8_t port)
     if (port == 60 || port == 61) {
         return host_files_in(port);
     }
+    if (port == 24 || port == 25 || port == 26 || port == 27 ||
+        port == 28 || port == 29 || port == 30) {
+        return time_input(port);
+    }
+    if (port == 200) {
+        if (g_port200_count < g_port200_len &&
+            g_port200_count < sizeof(g_port200_buffer)) {
+            return (uint8_t)g_port200_buffer[g_port200_count++];
+        }
+        return 0x00;
+    }
     return 0x00;
 }
 
@@ -194,6 +210,13 @@ static void io_port_out(uint8_t port, uint8_t data)
 {
     if (port == 60 || port == 61) {
         host_files_out(port, data);
+        return;
+    }
+    if ((port >= 24 && port <= 30) || (port >= 37 && port <= 44)) {
+        memset(g_port200_buffer, 0, sizeof(g_port200_buffer));
+        g_port200_count = 0;
+        g_port200_len = time_output(port, data, g_port200_buffer,
+                                    sizeof(g_port200_buffer));
     }
 }
 
@@ -281,6 +304,9 @@ static bool emulator_boot(const char *drive_a, const char *drive_b, const char *
         return false;
     }
     host_files_init(g_apps_root);
+    time_reset();
+    g_port200_len = 0;
+    g_port200_count = 0;
 
     controller = host_disk_controller();
     memset(memory, 0, 64 * 1024);

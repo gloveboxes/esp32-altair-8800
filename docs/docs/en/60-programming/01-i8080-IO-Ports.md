@@ -41,6 +41,31 @@ Many ports return a multi-byte string. The convention is:
 | 24-29 | IN | -    | Query corresponding millisecond timer (non-zero while running, 0 when expired) |
 | 30 | IN  | -         | Query seconds timer (non-zero while running, 0 when expired) |
 
+### Stopwatch ports (time_io)
+
+Passive elapsed-time counters with 1-second resolution. Unlike the countdown timers above, a stopwatch never expires — it simply measures the time since it was started. The elapsed value is returned as an unsigned 32-bit second count, emitted big-endian as 4 raw bytes (the BDS C `long` byte layout: MSB first) and read back via port 200.
+
+| Port | Dir | Port data | Loads (read with port 200) |
+|------|-----|-----------|----------------------------|
+| 37 | OUT | 0 | Start/reset stopwatch 0 (records current time; no response) |
+| 37 | OUT | 1 | Latch stopwatch 0 elapsed seconds as a 4-byte big-endian long |
+| 38 | OUT | 0 | Start/reset stopwatch 1 (records current time; no response) |
+| 38 | OUT | 1 | Latch stopwatch 1 elapsed seconds as a 4-byte big-endian long |
+| 39 | OUT | 0 | Start/reset stopwatch 2 (records current time; no response) |
+| 39 | OUT | 1 | Latch stopwatch 2 elapsed seconds as a 4-byte big-endian long |
+
+```c
+char elapsed[4];        /* BDS C long: elapsed[0] = MSB            */
+
+outp(37, 0);            /* start stopwatch 0                       */
+/* ... do some work ... */
+outp(37, 1);            /* latch elapsed seconds                   */
+elapsed[0] = inp(200);  /* read the 4-byte big-endian long back    */
+elapsed[1] = inp(200);
+elapsed[2] = inp(200);
+elapsed[3] = inp(200);  /* elapsed now holds the seconds as a long */
+```
+
 ### Wall clock and date ports (time_io)
 
 The wall clock requires Wi-Fi and a successful SNTP sync. Before sync these ports return a `+<seconds>s` boot-relative fallback.

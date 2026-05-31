@@ -38,6 +38,9 @@ void io_port_out(uint8_t port, uint8_t data)
         case 28:
         case 29:
         case 30:
+        case 37:
+        case 38:
+        case 39:
         case 41:
         case 42:
         case 43:

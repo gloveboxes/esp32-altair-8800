@@ -40,6 +40,7 @@ static const char* TAG = "WS_Server";
 typedef struct {
     int fd;
     size_t len;
+    bool is_ping;
     uint8_t data[WS_SEND_BUF_SIZE];
 } ws_send_work_t;
 
@@ -52,9 +53,19 @@ typedef struct {
 static ws_send_work_t s_send_work;
 static SemaphoreHandle_t s_send_done = NULL;
 
-// Track consecutive ping failures to detect dead connections
-static int s_ping_failures = 0;
+// ===== Ping/Pong keepalive =====
+// Liveness state lives here (near the top) because C requires it be declared
+// before its first use in ws_handler() and websocket_send_work() below. The
+// rest of the keepalive logic is grouped under the matching "Ping/Pong
+// keepalive" banner lower in this file (websocket_server_send_ping), plus the
+// PONG-reset points inside ws_handler.
+//
+// Count pings sent but not yet answered by a PONG. Reset to 0 whenever a PONG
+// arrives. If it reaches MAX_PING_FAILURES the round trip has gone unanswered
+// for that many ping cycles and the connection is treated as dead.
+static int s_pings_unanswered = 0;
 #define MAX_PING_FAILURES 3
+// ===== End Ping/Pong keepalive (state) =====
 
 // External callbacks from websocket_console.c
 extern void websocket_console_handle_rx(const uint8_t* data, size_t len);
@@ -77,7 +88,7 @@ static void mark_client_disconnected(int fd, const char* reason)
 {
     if (fd >= 0 && fd == s_client_fd) {
         s_client_fd = -1;
-        s_ping_failures = 0;
+        s_pings_unanswered = 0;
         ESP_LOGI(TAG, "WebSocket client disconnected (fd=%d, %s)", fd, reason);
         websocket_console_on_disconnect();
     }
@@ -160,7 +171,10 @@ static esp_err_t ws_handler(httpd_req_t* req)
 
     // Handle control frames with no payload
     if (ws_pkt.len == 0) {
-        if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
+        if (ws_pkt.type == HTTPD_WS_TYPE_PONG) {
+            // ===== Ping/Pong keepalive ===== Keepalive reply - round trip done.
+            s_pings_unanswered = 0;
+        } else if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
             // Send close response, server will close session
             httpd_ws_frame_t close_pkt = {
                 .final = true,
@@ -210,6 +224,11 @@ static esp_err_t ws_handler(httpd_req_t* req)
         case HTTPD_WS_TYPE_TEXT:
         case HTTPD_WS_TYPE_BINARY:
             websocket_console_handle_rx(ws_pkt.payload, ws_pkt.len);
+            break;
+
+        case HTTPD_WS_TYPE_PONG:
+            // ===== Ping/Pong keepalive ===== reply (echoed payload) - round trip done.
+            s_pings_unanswered = 0;
             break;
 
         case HTTPD_WS_TYPE_CLOSE: {
@@ -354,24 +373,45 @@ static void websocket_send_work(void *arg)
         return;
     }
 
-    if (s_server && work->fd >= 0 && work->fd == s_client_fd && work->len > 0) {
+    if (s_server && work->fd >= 0 && work->fd == s_client_fd) {
         httpd_ws_frame_t ws_pkt = {
             .final = true,
             .fragmented = false,
-            .type = HTTPD_WS_TYPE_BINARY,
-            .payload = work->data,
-            .len = work->len
+            .type = work->is_ping ? HTTPD_WS_TYPE_PING : HTTPD_WS_TYPE_BINARY,
+            .payload = work->is_ping ? NULL : work->data,
+            .len = work->is_ping ? 0 : work->len
         };
 
-        esp_err_t ret = httpd_ws_send_frame_async(s_server, work->fd, &ws_pkt);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "WebSocket send failed: %s", esp_err_to_name(ret));
-            mark_client_disconnected(work->fd, "send failed");
-            httpd_sess_trigger_close(s_server, work->fd);
+        if (work->is_ping || work->len > 0) {
+            esp_err_t ret = httpd_ws_send_frame_async(s_server, work->fd, &ws_pkt);
+            if (ret != ESP_OK) {
+                if (work->is_ping) {
+                    // Could not even enqueue the ping - count it as unanswered.
+                    s_pings_unanswered++;
+                    if (s_pings_unanswered >= MAX_PING_FAILURES) {
+                        ESP_LOGW(TAG, "Connection dead after %d unanswered pings", s_pings_unanswered);
+                        mark_client_disconnected(work->fd, "ping failed");
+                        httpd_sess_trigger_close(s_server, work->fd);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "WebSocket send failed: %s", esp_err_to_name(ret));
+                    mark_client_disconnected(work->fd, "send failed");
+                    httpd_sess_trigger_close(s_server, work->fd);
+                }
+            } else if (work->is_ping) {
+                // Ping is on the wire; await a PONG. If too many go unanswered
+                // the link is dead even though the local enqueue succeeded.
+                s_pings_unanswered++;
+                if (s_pings_unanswered >= MAX_PING_FAILURES) {
+                    ESP_LOGW(TAG, "Connection dead after %d unanswered pings", s_pings_unanswered);
+                    mark_client_disconnected(work->fd, "pong timeout");
+                    httpd_sess_trigger_close(s_server, work->fd);
+                }
+            }
         }
     }
 
-    // Release the shared buffer for the next broadcast.
+    // Release the shared buffer for the next broadcast or ping.
     if (s_send_done) {
         xSemaphoreGive(s_send_done);
     }
@@ -397,6 +437,7 @@ bool websocket_server_broadcast(const uint8_t* data, size_t len)
 
     s_send_work.fd = fd;
     s_send_work.len = len;
+    s_send_work.is_ping = false;
     memcpy(s_send_work.data, data, len);
 
     esp_err_t ret = httpd_queue_work(s_server, websocket_send_work, &s_send_work);
@@ -409,31 +450,35 @@ bool websocket_server_broadcast(const uint8_t* data, size_t len)
     return true;
 }
 
+// ===== Ping/Pong keepalive =====
+// Periodic liveness check. websocket_console.c's TX task calls this on a timer.
+// The unanswered-ping accounting that decides when the link is dead lives in
+// websocket_send_work() (shared with the data path); the PONG that resets the
+// counter is handled in ws_handler(); the counter itself is declared under the
+// matching banner at the top of this file.
 void websocket_server_send_ping(void)
 {
     int fd = s_client_fd;
-    if (!s_server || fd < 0) {
+    if (!s_server || fd < 0 || !s_send_done) {
         return;
     }
 
-    httpd_ws_frame_t ping_pkt = {
-        .final = true,
-        .fragmented = false,
-        .type = HTTPD_WS_TYPE_PING,
-        .payload = NULL,
-        .len = 0
-    };
+    // Route the ping through the SAME single-in-flight token and httpd work
+    // queue as data sends. Otherwise the ping (sent on the TX task) could run
+    // httpd_ws_send_frame_async concurrently with an in-flight broadcast on the
+    // httpd task, interleaving bytes on the same socket and corrupting frames.
+    if (xSemaphoreTake(s_send_done, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;  // a send is still in flight - skip this ping cycle
+    }
 
-    esp_err_t ret = httpd_ws_send_frame_async(s_server, fd, &ping_pkt);
+    s_send_work.fd = fd;
+    s_send_work.len = 0;
+    s_send_work.is_ping = true;
+
+    esp_err_t ret = httpd_queue_work(s_server, websocket_send_work, &s_send_work);
     if (ret != ESP_OK) {
-        s_ping_failures++;
-        if (s_ping_failures >= MAX_PING_FAILURES) {
-            // Multiple ping failures - connection is truly dead
-            ESP_LOGW(TAG, "Connection dead after %d ping failures", s_ping_failures);
-            mark_client_disconnected(fd, "ping failed");
-            httpd_sess_trigger_close(s_server, fd);
-        }
-    } else {
-        s_ping_failures = 0;  // Reset on success
+        ESP_LOGW(TAG, "Failed to queue WebSocket ping: %s", esp_err_to_name(ret));
+        xSemaphoreGive(s_send_done);  // nothing queued - release buffer
     }
 }
+// ===== End Ping/Pong keepalive =====
