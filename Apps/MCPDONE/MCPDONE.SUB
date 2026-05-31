@@ -1,11 +1,15 @@
-era mcpdone.c
-era mcpdone.crl
+ft -g file://mcpdone/mcpdone.asm
+ft -g file://mcpdone/mcpdone.asm
+ft -g file://mcpdone/mcpdone.asm
+ft -g file://mcpdone/mcpdone.asm
 
-ft -g file://mcpdone/mcpdone.c
-cc mcpdone
-clink mcpdone
+b:mac mcpdone
+b:load mcpdone
+a:pip a:mcpdone.com=mcpdone.com
 
-era mcpdone.c
-era mcpdone.crl
+era mcpdone.asm
+era mcpdone.hex
+era mcpdone.prn
+era mcpdone.sym
 
 mcpdone mcpdone

@@ -3,10 +3,13 @@ ft -g file://date/date.asm
 ft -g file://date/date.asm
 ft -g file://date/date.asm
 
-b:asm date
+b:mac date
 b:load date
 a:pip a:date.com=date.com
 
 era date.asm
+era date.hex
+era date.prn
+era date.sym
 
 mcpdone date

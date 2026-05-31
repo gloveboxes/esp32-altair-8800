@@ -4,7 +4,7 @@ ft -g file://wsperf/wsperf.asm
 ft -g file://wsperf/wsperf.asm
 ft -g file://wsperf/wsperf.asm
 
-b:asm wsperf
+b:mac wsperf
 b:load wsperf
 
 era a:wsperf.com

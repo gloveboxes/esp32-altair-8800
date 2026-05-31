@@ -98,23 +98,32 @@ a:pip a:esp32.com=esp32.com
 era esp32.*
 era long.*
 b:ft -g date/date.asm
-b:asm date
+b:mac date
 b:load date
 era a:date.*
 a:pip a:date.com=date.com
 era date.*
 b:ft -g autorun/autorun.asm
-b:asm autorun
+b:mac autorun
 b:load autorun
 era a:autorun.*
 a:pip a:autorun.com=autorun.com
 era autorun.*
 b:ft -g wsperf/wsperf.asm
-b:asm wsperf
+b:mac wsperf
 b:load wsperf
 era a:wsperf.*
 a:pip a:wsperf.com=wsperf.com
 era wsperf.*
+b:
+ft -g mcpdone/mcpdone.asm
+mac mcpdone
+load mcpdone
+era mcpdone.asm
+era mcpdone.hex
+era mcpdone.prn
+era mcpdone.sym
+c:
 era c.ccc
 era cc2.com
 era deff.crl

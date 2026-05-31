@@ -3,10 +3,13 @@ ft -g file://vibe/vibe.asm
 ft -g file://vibe/vibe.asm
 ft -g file://vibe/vibe.asm
 
-b:asm vibe
+b:mac vibe
 b:load vibe
 a:pip a:vibe.com=vibe.com
 
 era vibe.asm
+era vibe.hex
+era vibe.prn
+era vibe.sym
 
 mcpdone vibe
