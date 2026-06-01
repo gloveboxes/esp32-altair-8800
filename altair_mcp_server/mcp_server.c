@@ -1,8 +1,12 @@
 #define _GNU_SOURCE
 
+#include "chat_io.h"
+#include "environment_io.h"
 #include "host_files_io.h"
+#include "io_ports.h"
 #include "time_io.h"
 #include "universal_88dcdd.h"
+#include "weather_io.h"
 
 #include "intel8080.h"
 #include "memory.h"
@@ -16,15 +20,25 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <direct.h>
+#include <io.h>
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 #define strdup _strdup
 #define MKDIR(path) _mkdir(path)
+#define DUP(fd) _dup(fd)
+#define DUP2(a, b) _dup2((a), (b))
+#define CLOSE_FD(fd) _close(fd)
+#define FILENO(f) _fileno(f)
 #else
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <unistd.h>
 #define MKDIR(path) mkdir((path), 0777)
+#define DUP(fd) dup(fd)
+#define DUP2(a, b) dup2((a), (b))
+#define CLOSE_FD(fd) close(fd)
+#define FILENO(f) fileno(f)
 #endif
 #include <errno.h>
 #include <time.h>
@@ -156,10 +170,6 @@ static size_t g_input_write = 0;
 static char g_output[OUTPUT_CAP];
 static size_t g_output_len = 0;
 
-static char g_port200_buffer[256];
-static size_t g_port200_len = 0;
-static size_t g_port200_count = 0;
-
 static uint8_t terminal_read(void)
 {
     uint8_t ch;
@@ -185,39 +195,6 @@ static void terminal_write(uint8_t c)
 static uint8_t sense_switches(void)
 {
     return 0xff;
-}
-
-static uint8_t io_port_in(uint8_t port)
-{
-    if (port == 60 || port == 61) {
-        return host_files_in(port);
-    }
-    if (port == 24 || port == 25 || port == 26 || port == 27 ||
-        port == 28 || port == 29 || port == 30) {
-        return time_input(port);
-    }
-    if (port == 200) {
-        if (g_port200_count < g_port200_len &&
-            g_port200_count < sizeof(g_port200_buffer)) {
-            return (uint8_t)g_port200_buffer[g_port200_count++];
-        }
-        return 0x00;
-    }
-    return 0x00;
-}
-
-static void io_port_out(uint8_t port, uint8_t data)
-{
-    if (port == 60 || port == 61) {
-        host_files_out(port, data);
-        return;
-    }
-    if ((port >= 24 && port <= 30) || (port >= 37 && port <= 44)) {
-        memset(g_port200_buffer, 0, sizeof(g_port200_buffer));
-        g_port200_count = 0;
-        g_port200_len = time_output(port, data, g_port200_buffer,
-                                    sizeof(g_port200_buffer));
-    }
 }
 
 static void enqueue_text(const char *text)
@@ -305,8 +282,6 @@ static bool emulator_boot(const char *drive_a, const char *drive_b, const char *
     }
     host_files_init(g_apps_root);
     time_reset();
-    g_port200_len = 0;
-    g_port200_count = 0;
 
     controller = host_disk_controller();
     memset(memory, 0, 64 * 1024);
@@ -1486,6 +1461,28 @@ int main(int argc, char **argv)
 
     setvbuf(stdout, NULL, _IONBF, 0);
     fprintf(stderr, "[MCP] altair-cpm-build started\n");
+
+    /* Initialize the shared port drivers once. environment_io must come
+     * first because chat_io_init() and weather_io_init() read settings from
+     * the env store. host_files_init() and time_reset() run per-boot inside
+     * emulator_boot(). The drivers emit startup banners on stdout, which is
+     * the JSON-RPC channel, so redirect stdout to stderr while they init. */
+    {
+        int saved_stdout = DUP(FILENO(stdout));
+
+        fflush(stdout);
+        DUP2(FILENO(stderr), FILENO(stdout));
+
+        environment_io_init(NULL);
+        chat_io_init();
+        weather_io_init();
+
+        fflush(stdout);
+        if (saved_stdout >= 0) {
+            DUP2(saved_stdout, FILENO(stdout));
+            CLOSE_FD(saved_stdout);
+        }
+    }
 
     while (read_message(&message)) {
         handle_message(message);

@@ -16,8 +16,8 @@ add_executable(altair-local
     main.c
     host_platform.c
     ansi_input.c
-    io_ports.c
     websocket_console.c
+    PortDrivers/io_ports.c
     PortDrivers/host_chat_io.c
     PortDrivers/environment_io.c
     PortDrivers/host_files_io.c
