@@ -35,14 +35,16 @@ int inp();
 int outp();
 int fputc();
 
-int ftget(filename, fp_out, bwrit)
+int ftget(filename, fp_out, bwrit, binary)
 char* filename;
 FILE* fp_out;
 int* bwrit;
+int binary;
 {
-    int i, len, status, byte, count, chunk_len;
+    int i, len, status, byte, count, chunk_len, pad, wlen;
 
     count = 0;
+    wlen = 0;
 
     /* Start filename transfer */
     outp(FT_CPRT, FT_SETFN);
@@ -105,8 +107,25 @@ int* bwrit;
         for (i = 0; i < chunk_len; i++)
         {
             byte = inp(FT_DPRT) & 255;
-            fputc(byte, fp_out);
             count++;
+            if (binary)
+            {
+                fputc(byte, fp_out);
+                wlen++;
+            }
+            else if (byte == 10)
+            {
+                /* LF -> CR LF for canonical CP/M line endings */
+                fputc(13, fp_out);
+                fputc(10, fp_out);
+                wlen += 2;
+            }
+            else if (byte != 13)
+            {
+                /* ordinary text byte (incoming CR is stripped) */
+                fputc(byte, fp_out);
+                wlen++;
+            }
         }
 
         /* Check if that was the last chunk */
@@ -125,6 +144,26 @@ int* bwrit;
     /* Close transfer */
     outp(FT_CPRT, FT_CLOSE);
 
+    /* Text mode writes a single ^Z end-of-text marker. Both modes pad the  */
+    /* final partial CP/M record with NUL so the saved file is well-formed; */
+    /* BDS C does not zero-fill the last record itself. The reported count  */
+    /* stays the real number of received bytes.                            */
+    if (!binary)
+    {
+        fputc(CPMEOF, fp_out);
+        wlen++;
+    }
+    pad = wlen & 127;
+    if (pad != 0)
+    {
+        pad = 128 - pad;
+        while (pad != 0)
+        {
+            fputc(0, fp_out);
+            pad--;
+        }
+    }
+
     if (bwrit != 0)
     {
         *bwrit = count;
@@ -137,7 +176,7 @@ int main(argc, argv)
 int argc;
 char** argv;
 {
-    int result, bwrit;
+    int result, bwrit, binary;
     FILE* fp_out;
     char* filename;
     char* save_fn;
@@ -145,23 +184,29 @@ char** argv;
 
     result = 0;
     bwrit = 0;
+    binary = 0;
 
     if (argc == 1)
     {
         printf("FT (File Transfer) - Remote File Transfer v%s\n", FT_VERSION);
         printf("Transfer files from Remote FT Server\n\n");
-        printf("Usage: ft [-g <filename>]\n");
+        printf("Usage: ft [-g <filename>] [-gb <filename>]\n");
         printf("\nOptions:\n");
-        printf("  -g <filename>  Get/download a file from the server\n");
+        printf("  -g  <filename>  Get a text file (normalize line endings)\n");
+        printf("  -gb <filename>  Get a binary file (verbatim bytes)\n");
         printf("\nExamples:\n");
-        printf("  ft -g test.txt       Download test.txt from server\n");
-        printf("  ft -g subdir/foo.c   Download foo.c from subdir\n");
+        printf("  ft -g test.txt       Download text file from server\n");
+        printf("  ft -gb prog.com      Download binary file from server\n");
         return 0;
     }
 
     if (argc == 3)
     {
-        if (strcmp(argv[1], "-g") == 0 || strcmp(argv[1], "-G") == 0)
+        if (strcmp(argv[1], "-gb") == 0 || strcmp(argv[1], "-GB") == 0)
+        {
+            binary = 1;
+        }
+        if (binary || strcmp(argv[1], "-g") == 0 || strcmp(argv[1], "-G") == 0)
         {
             filename = argv[2];
             save_fn = filename;
@@ -186,13 +231,17 @@ char** argv;
                 printf("Saving as '%s'\n", save_fn);
             }
 
-            if ((fp_out = fopen(save_fn, "w")) == NULL)
+            if ((fp_out = fopen(save_fn, "wb")) == NULL)
             {
                 printf("Error: Failed to create output file '%s'\n", save_fn);
                 return -1;
             }
 
-            result = ftget(filename, fp_out, &bwrit);
+            /* Clear the text flag so the buffered I/O layer never inserts */
+            /* its own ^Z or CR; ftget does all line-ending handling.      */
+            fp_out->_flags &= ~_TEXT;
+
+            result = ftget(filename, fp_out, &bwrit, binary);
             fclose(fp_out);
 
             if (result == 0)
