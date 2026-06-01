@@ -77,9 +77,9 @@ era dx*.*
 b:ft -g sdk/dxenv.c
 b:cc dxenv
 era dxenv.c
-b:ft -g env/env.c
-b:cc env
-b:clink env dxenv
+b:ft -g env/env.asm
+b:mac env
+b:load env
 era a:env.*
 a:pip a:env.com=env.com
 era env.*
