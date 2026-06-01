@@ -1,6 +1,6 @@
-ft -g file://edit/edit.c
-cc edit
-clink edit
+ft -g file://edit/edit.asm
+mac edit $$PZ SZ
+load edit
 a:pip a:edit.com=edit.com
 era edit.*
 mcpdone edit

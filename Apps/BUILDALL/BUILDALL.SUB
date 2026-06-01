@@ -64,9 +64,9 @@ b:clink tictac dxterm dxtimer dxsys
 era a:tictac.*
 a:pip a:tictac.com=tictac.com
 era tictac.*
-b:ft -g edit/edit.c
-b:cc edit
-b:clink edit
+b:ft -g edit/edit.asm
+b:mac edit $$PZ SZ
+b:load edit
 era a:edit.*
 a:pip a:edit.com=edit.com
 era edit.*
