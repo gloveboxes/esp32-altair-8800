@@ -1,0 +1,15 @@
+ft -g file://sleep/sleep.asm
+ft -g file://sleep/sleep.asm
+ft -g file://sleep/sleep.asm
+ft -g file://sleep/sleep.asm
+
+b:mac sleep
+b:load sleep
+a:pip a:sleep.com=sleep.com
+
+era sleep.asm
+era sleep.hex
+era sleep.prn
+era sleep.sym
+
+mcpdone sleep

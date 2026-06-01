@@ -90,9 +90,9 @@ era a:clock.*
 a:pip a:clock.com=clock.com
 era clock.*
 era dxenv.*
-b:ft -g esp32/esp32.c
-b:cc esp32
-b:clink esp32 long
+b:ft -g esp32/esp32.asm
+b:mac esp32
+b:load esp32
 era a:esp32.*
 a:pip a:esp32.com=esp32.com
 era esp32.*

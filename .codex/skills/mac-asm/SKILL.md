@@ -1,6 +1,6 @@
 ---
 name: mac-asm
-description: Write, edit, and review Digital Research MAC macro assembler source for 8080 CP/M / Altair 8800 projects. Use when working on .ASM source that uses macros (MACRO/ENDM, REPT, IRP, IRPC, conditional assembly) or when a .SUB build script assembles 8080 code on CP/M. MAC.COM is a superset of ASM.COM: it assembles everything ASM.COM can plus macros. Covers when to choose MAC over ASM, the MAC build/clean flow (mac -> load -> .COM), the extra .SYM/.PRN artifacts, and the 6-character symbol and decimal-port constraints shared with ASM.
+description: Write, edit, and review Digital Research MAC macro assembler source for 8080 CP/M / Altair 8800 projects. Use when working on .ASM source that uses macros (MACRO/ENDM, REPT, IRP, IRPC, conditional assembly), migrating BDS C code to MAC/8080 assembly, or when a .SUB build script assembles 8080 code on CP/M. MAC.COM is a superset of ASM.COM: it assembles everything ASM.COM can plus macros. Covers when to choose MAC over ASM, the MAC build/clean flow (mac -> load -> .COM), the extra .SYM/.PRN artifacts, and the 6-character symbol and decimal-port constraints shared with ASM.
 ---
 
 # MAC (Digital Research Macro Assembler)
@@ -65,11 +65,33 @@ era myapp.sym
 If the script already uses a wildcard clean such as `era myapp.*`, no extra
 erase lines are needed.
 
+For very large `.ASM` sources, the `.PRN` listing and `.SYM` file can overflow
+the small CP/M work disk before the `.HEX` is complete, producing
+`OUTPUT FILE WRITE ERROR`. If you only need the `.HEX` for `LOAD`, suppress
+the listing and symbol output by sending PRN and SYM to the null device:
+
+```
+mac myapp $PZ SZ
+```
+
+Inside a `.SUB` file, `$` starts SuperSUB parameter substitution, so escape it
+as `$$`:
+
+```
+b:mac myapp $$PZ SZ
+```
+
 ## Source Constraints (shared with ASM)
 
 These limits come from the CP/M assembler/loader toolchain, not from C:
 
-- Symbols must be **unique within their first 6 characters**.
+- Symbols must be **unique within their first 6 characters**. This is about
+  *significance*, not a hard length cap: the assembler accepts longer names and
+  silently truncates to 6, so names like `MESSAGE`, `IBUFLEN`, or `FLAGTRK`
+  assemble fine on their own. The only real error is a first-6 *collision*
+  between two distinct names. Do not port BDS C's hard 7-character length
+  rejection onto assembly — flagging raw length alone produces false positives
+  on sources (and was a real bug fixed in `check_mac_asm.py`).
 - Express I/O ports in **decimal** in `IN` / `OUT` (the assembler is picky about
   port radix in some builds; the existing repo `.ASM` files use decimal ports).
 - `ORG 0100H` — transient programs load at the base of the TPA.
@@ -77,6 +99,10 @@ These limits come from the CP/M assembler/loader toolchain, not from C:
   9 = print `$`-terminated string (`DE` -> string).
 - Reading the command tail: length byte at `0080H`, characters from `0081H`
   (already upper-cased by the CCP).
+- `!` is a statement separator in MAC/ASM, even when it appears after `;` in a
+  comment. Do not write comments such as `; x != y`; use `<>` or words instead.
+- Prefer explicit hex for negative immediates (`0FFFFH`, `0FFE6H`) instead of
+  relying on unary minus syntax.
 
 ## Reserved-Word Caution When Porting ASM -> MAC
 
@@ -84,6 +110,31 @@ Because MAC adds directives (`MACRO`, `ENDM`, `REPT`, `IRP`, `IRPC`, `EXITM`,
 `LOCAL`, `MACLIB`, etc.), an old ASM source that used one of those as a label or
 symbol will clash under MAC. This is uncommon but is the one real gotcha when
 converting `asm` build steps to `mac`. Scan for those names before switching.
+
+Also avoid labels that behave like assembler pseudo-ops or module directives in
+some MAC-family tools. In practice, `TITLE`, `IRP`, and `NAME` have all caused
+bad assemblies or validator failures in this repo. Rename them to local forms
+such as `TTLBAR`, `IRPT`, or `FNAME`.
+
+## Porting C Runtime Logic To 8080
+
+When migrating BDS C code by hand, do an extra pass over helper conventions and
+heap behavior. These bugs assemble cleanly but fail at runtime:
+
+- If a helper has a stack-preserving prologue, call its public entry point. Do
+  not jump into an internal loop label past a `PUSH`; the matching `POP` will
+  consume the caller's return address.
+- Write each helper's register convention in a comment and audit `XCHG` before
+  calls. For example, `strcpy`-style helpers here use `DE=dst, HL=src`; one
+  extra `XCHG` silently reverses a copy.
+- If a custom allocator stores a free-list `next` pointer inside freed payloads,
+  make every block large enough for that pointer. With a 2-byte header and a
+  2-byte `next`, the minimum total block size is 4 bytes; otherwise freeing an
+  empty string overwrites the next block.
+- Preserve working heap during large file loads. A load can be technically
+  successful but leave too little memory for editing, redraw, save, prompts, or
+  recovery. Add a load-time reserve and truncate before the allocator is nearly
+  exhausted.
 
 ## Macro Patterns That Work Well Here
 
@@ -143,3 +194,9 @@ emulator into CP/M 2.2 and exposes build tools. Drives:
 `FT` (`ft -g ...`) serves files from this repo's `Apps/` directory. Use
 `build_app` for the normal edit/build loop and `run_submit` for `BUILDALL.SUB`.
 Treat `MCP-TOOL-COMPLETED <NAME>` as the only success signal.
+
+The MCP console path is good for smoke tests with printable characters, Enter,
+Tab, and ordinary command text. Some control bytes are swallowed or transformed
+by host flow control / JSON escaping (`Ctrl-Q`/XON and sometimes ESC or `Ctrl-F`),
+so do not treat failure to inject those keys as proof that the CP/M program is
+broken. Use source-level review or an interactive terminal for those paths.

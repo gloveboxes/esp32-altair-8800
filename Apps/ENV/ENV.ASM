@@ -619,7 +619,6 @@ READL:  STA     RMAX            ; HL=buffer, A=max-1, returns A=len or CY
         XRA     A
         STA     RLEN
 RL1:    MVI     C,FCONI
-        MVI     E,0
         CALL    BDOS
         ANI     7FH
         MOV     B,A
@@ -712,6 +711,8 @@ PN3:    MOV     A,M
         SUI     '0'
         MOV     E,A
         MOV     A,B
+        CPI     10
+        JNC     PNERR
         ADD     A
         MOV     D,A
         ADD     A

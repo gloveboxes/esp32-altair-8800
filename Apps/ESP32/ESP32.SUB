@@ -1,13 +1,14 @@
-ft -g file://esp32/esp32.c
-ft -g file://sdk/long.c
+ft -g file://esp32/esp32.asm
 
-cc long
-cc esp32
-clink esp32 long
+b:mac esp32
+b:load esp32
 
+era a:esp32.*
 a:pip a:esp32.com=esp32.com
 
-era esp32.*
-era long.*
+era esp32.asm
+era esp32.hex
+era esp32.prn
+era esp32.sym
 
 mcpdone esp32
