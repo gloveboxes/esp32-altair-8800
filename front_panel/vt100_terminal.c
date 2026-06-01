@@ -50,7 +50,14 @@
 #define PRESENT_ROWS_PER_BAND 10
 #define STATUS_ONLY_PRESENT_INTERVAL_US (PANEL_UPDATE_INTERVAL_MS * 1000)
 #define VT100_RX_QUEUE_DEPTH 4096
-#define VT100_RX_BATCH_SIZE 1024
+// Drain the full queue per flush to mirror the web terminal, which empties its
+// entire TX queue on each 100ms timer tick.
+#define VT100_RX_BATCH_SIZE 4096
+// How long terminal_write may block when the RX queue is full before dropping
+// the oldest byte. Mirrors the WebSocket console (WS_TX_ENQUEUE_TIMEOUT_MS) so
+// both displays apply the same backpressure to the 8080 loop under heavy
+// output and therefore stay in sync instead of diverging.
+#define VT100_RX_ENQUEUE_TIMEOUT_MS 100
 
 /* ---- Embedded 5x7 bitmap font ----------------------------------------- *
  *                                                                           *
@@ -808,8 +815,14 @@ void vt100_terminal_putchar(uint8_t c)
 
     if (!s_initialized || !s_rx_queue) return;
 
-    queued = xQueueSend(s_rx_queue, &c, 0) == pdTRUE;
+    // Block for up to VT100_RX_ENQUEUE_TIMEOUT_MS so a burst of emulator output
+    // applies backpressure to the 8080 loop instead of silently dropping
+    // characters. Only after the timeout do we give up and drop the oldest
+    // byte to make room for the newest. Matches the WebSocket console policy.
+    queued = xQueueSend(s_rx_queue, &c,
+                        pdMS_TO_TICKS(VT100_RX_ENQUEUE_TIMEOUT_MS)) == pdTRUE;
     if (!queued) {
+        // Still full after waiting - drop oldest and try again immediately.
         uint8_t discard;
         xQueueReceive(s_rx_queue, &discard, 0);
         queued = xQueueSend(s_rx_queue, &c, 0) == pdTRUE;

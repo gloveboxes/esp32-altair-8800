@@ -263,15 +263,15 @@ void altair_reset(void)
 #define PANEL_UPDATE_TASK_STACK_SIZE 3072 // observed HWM ~1.4 KB
 #define PANEL_UPDATE_TASK_PRIORITY 7
 #define PANEL_UPDATE_TASK_CORE 0
+// Mirror the web terminal's output batching (100ms timer draining the full
+// 4096-deep RX queue) so the VT100 TFT renders in the same cadence.
+#define PANEL_UPDATE_TASK_INTERVAL_MS 100
 #else
 #define PANEL_UPDATE_TASK_STACK_SIZE 4096
 #define PANEL_UPDATE_TASK_PRIORITY 4
 #define PANEL_UPDATE_TASK_CORE 0
+#define PANEL_UPDATE_TASK_INTERVAL_MS (ALTAIR_HAS_FRONT_PANEL_KIT ? 10 : 20)
 #endif
-
-#define PANEL_UPDATE_INTERVAL_MS 50  // ~20Hz
-
-#define PANEL_UPDATE_TASK_INTERVAL_MS (ALTAIR_HAS_FRONT_PANEL_KIT ? 10 : 50)
 
 //-----------------------------------------------------------------------------
 // Emulator Task (runs on Core 1)
