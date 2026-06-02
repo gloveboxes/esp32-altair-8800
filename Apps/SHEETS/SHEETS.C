@@ -498,7 +498,10 @@ rng:
                     eok = 0;
                     return 0;
                 }
-                cnt++;
+                /* Only count populated cells so AVG divides by the
+                 * number of cells that actually hold a value. */
+                if (cells[i][j] && cells[i][j][0])
+                    cnt++;
                 if (tag == 0 || tag == 1)
                 {
                     ladd(vp, vp, rv);
