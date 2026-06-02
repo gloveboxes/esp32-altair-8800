@@ -19,6 +19,29 @@
 #include <string.h>
 #include <time.h>
 
+/*
+ * The entry store (s_entries/s_count) is read by the weather background
+ * thread via environment_io_get() while the CPU thread mutates it through
+ * the ENV port (SET/DELETE/CLEAR). Guard the public entry points with a
+ * mutex to avoid a data race. Internal helpers stay lock-free so they can
+ * be called while the lock is already held.
+ */
+#ifdef _WIN32
+#include <windows.h>
+typedef SRWLOCK env_mutex_t;
+#define ENV_MUTEX_INIT SRWLOCK_INIT
+static void env_mutex_lock(env_mutex_t *m) { AcquireSRWLockExclusive(m); }
+static void env_mutex_unlock(env_mutex_t *m) { ReleaseSRWLockExclusive(m); }
+#else
+#include <pthread.h>
+typedef pthread_mutex_t env_mutex_t;
+#define ENV_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+static void env_mutex_lock(env_mutex_t *m) { pthread_mutex_lock(m); }
+static void env_mutex_unlock(env_mutex_t *m) { pthread_mutex_unlock(m); }
+#endif
+
+static env_mutex_t s_lock = ENV_MUTEX_INIT;
+
 #define ENV_MAX_ENTRIES 128
 #define ENV_KEY_SIZE 17
 #define ENV_VALUE_SIZE 256
@@ -134,38 +157,45 @@ void environment_io_init(const char *file_path)
 
 size_t environment_output(int port, uint8_t data, char *buffer, size_t buffer_length)
 {
+    size_t ret = 0;
+
     if (!s_initialized)
     {
         environment_io_init(NULL);
     }
 
+    env_mutex_lock(&s_lock);
     if (port == ENVIRONMENT_PORT_DATA)
     {
         env_append_byte(data);
-        return 0;
     }
-
-    if (port == ENVIRONMENT_PORT_COMMAND)
+    else if (port == ENVIRONMENT_PORT_COMMAND)
     {
         if (data == ENV_COMMAND_RESET)
         {
             env_reset_request();
             s_status = ENV_STATUS_OK;
-            return 0;
         }
-        return env_execute_command(data, buffer, buffer_length);
+        else
+        {
+            ret = env_execute_command(data, buffer, buffer_length);
+        }
     }
-
-    return 0;
+    env_mutex_unlock(&s_lock);
+    return ret;
 }
 
 uint8_t environment_input(uint8_t port)
 {
+    uint8_t value = 0;
+
     if (port == ENVIRONMENT_PORT_COMMAND)
     {
-        return (uint8_t)s_status;
+        env_mutex_lock(&s_lock);
+        value = (uint8_t)s_status;
+        env_mutex_unlock(&s_lock);
     }
-    return 0;
+    return value;
 }
 
 bool environment_io_get(const char *key, char *value, size_t value_length)
@@ -178,7 +208,9 @@ bool environment_io_get(const char *key, char *value, size_t value_length)
         environment_io_init(NULL);
     }
     env_normalize_key(key, normalized, ENV_KEY_SIZE);
+    env_mutex_lock(&s_lock);
     rc = env_get_value(normalized, value, value_length);
+    env_mutex_unlock(&s_lock);
     return rc == ENV_STATUS_OK;
 }
 
