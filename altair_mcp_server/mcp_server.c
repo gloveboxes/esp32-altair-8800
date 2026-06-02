@@ -4,6 +4,8 @@
 #include "environment_io.h"
 #include "host_files_io.h"
 #include "io_ports.h"
+#include "json_util.h"
+#include "jsonrpc.h"
 #include "time_io.h"
 #include "universal_88dcdd.h"
 #include "weather_io.h"
@@ -420,288 +422,6 @@ static bool ensure_booted(void)
     return reset_emulator();
 }
 
-static char *json_escape_dup(const char *text)
-{
-    const unsigned char *p = (const unsigned char *)text;
-    size_t cap = (strlen(text) * 6) + 3;
-    char *out = (char *)malloc(cap);
-    char *dst;
-
-    if (!out) {
-        return NULL;
-    }
-
-    dst = out;
-
-    *dst++ = '"';
-    while (*p) {
-        switch (*p) {
-        case '"':
-            memcpy(dst, "\\\"", 2);
-            dst += 2;
-            break;
-        case '\\':
-            memcpy(dst, "\\\\", 2);
-            dst += 2;
-            break;
-        case '\b':
-            memcpy(dst, "\\b", 2);
-            dst += 2;
-            break;
-        case '\f':
-            memcpy(dst, "\\f", 2);
-            dst += 2;
-            break;
-        case '\n':
-            memcpy(dst, "\\n", 2);
-            dst += 2;
-            break;
-        case '\r':
-            memcpy(dst, "\\r", 2);
-            dst += 2;
-            break;
-        case '\t':
-            memcpy(dst, "\\t", 2);
-            dst += 2;
-            break;
-        default:
-            if (*p < 0x20) {
-                snprintf(dst, 7, "\\u%04x", *p);
-                dst += 6;
-            } else {
-                *dst++ = (char)*p;
-            }
-            break;
-        }
-        p++;
-    }
-    *dst++ = '"';
-    *dst = '\0';
-    return out;
-}
-
-static char *json_get_string(const char *json, const char *key)
-{
-    char pattern[80];
-    const char *p;
-    char *out;
-    size_t len = 0;
-    size_t cap = 256;
-
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    p = strstr(json, pattern);
-    if (!p) {
-        return NULL;
-    }
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) {
-        return NULL;
-    }
-    p++;
-    while (isspace((unsigned char)*p)) {
-        p++;
-    }
-    if (*p != '"') {
-        return NULL;
-    }
-    p++;
-
-    out = (char *)malloc(cap);
-    if (!out) {
-        return NULL;
-    }
-
-    while (*p && *p != '"') {
-        char ch = *p++;
-        if (ch == '\\') {
-            ch = *p++;
-            switch (ch) {
-            case 'n':
-                ch = '\n';
-                break;
-            case 'r':
-                ch = '\r';
-                break;
-            case 't':
-                ch = '\t';
-                break;
-            case 'b':
-                ch = '\b';
-                break;
-            case 'f':
-                ch = '\f';
-                break;
-            default:
-                break;
-            }
-        }
-        if (len + 1 >= cap) {
-            cap *= 2;
-            out = (char *)realloc(out, cap);
-            if (!out) {
-                return NULL;
-            }
-        }
-        out[len++] = ch;
-    }
-    out[len] = '\0';
-    return out;
-}
-
-static char *json_get_id(const char *json)
-{
-    const char *p = strstr(json, "\"id\"");
-    const char *start;
-    size_t len;
-    char *id;
-
-    if (!p) {
-        return NULL;
-    }
-    p = strchr(p + 4, ':');
-    if (!p) {
-        return NULL;
-    }
-    p++;
-    while (isspace((unsigned char)*p)) {
-        p++;
-    }
-    start = p;
-    if (*p == '"') {
-        p++;
-        while (*p && (*p != '"' || *(p - 1) == '\\')) {
-            p++;
-        }
-        if (*p == '"') {
-            p++;
-        }
-    } else {
-        while (*p && *p != ',' && *p != '}' && !isspace((unsigned char)*p)) {
-            p++;
-        }
-    }
-    len = (size_t)(p - start);
-    id = (char *)malloc(len + 1);
-    if (!id) {
-        return NULL;
-    }
-    memcpy(id, start, len);
-    id[len] = '\0';
-    return id;
-}
-
-static int json_get_int(const char *json, const char *key, int fallback)
-{
-    char pattern[80];
-    const char *p;
-
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    p = strstr(json, pattern);
-    if (!p) {
-        return fallback;
-    }
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) {
-        return fallback;
-    }
-    return atoi(p + 1);
-}
-
-static bool json_get_bool(const char *json, const char *key, bool fallback)
-{
-    char pattern[80];
-    const char *p;
-
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    p = strstr(json, pattern);
-    if (!p) {
-        return fallback;
-    }
-    p = strchr(p + strlen(pattern), ':');
-    if (!p) {
-        return fallback;
-    }
-    p++;
-    while (isspace((unsigned char)*p)) {
-        p++;
-    }
-    if (strncmp(p, "true", 4) == 0) {
-        return true;
-    }
-    if (strncmp(p, "false", 5) == 0) {
-        return false;
-    }
-    return fallback;
-}
-
-static char *json_get_protocol_version(const char *json)
-{
-    char *version = json_get_string(json, "protocolVersion");
-
-    if (version) {
-        return version;
-    }
-
-    return strdup("2024-11-05");
-}
-
-static void send_body(const char *body)
-{
-    fputs(body, stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
-}
-
-static void send_simple_result(const char *id, const char *result)
-{
-    char *body;
-    size_t len;
-
-    len = strlen(id) + strlen(result) + 48;
-    body = (char *)malloc(len);
-    if (!body) {
-        return;
-    }
-    snprintf(body, len, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}", id, result);
-    send_body(body);
-    free(body);
-}
-
-static void send_error(const char *id, int code, const char *message)
-{
-    char body[1024];
-
-    snprintf(body, sizeof(body), "{\"jsonrpc\":\"2.0\",\"id\":%s,\"error\":{\"code\":%d,\"message\":\"%s\"}}",
-             id ? id : "null", code, message);
-    send_body(body);
-}
-
-static void send_tool_text_result(const char *id, const char *text)
-{
-    char *escaped;
-    char *body;
-
-    escaped = json_escape_dup(text);
-    if (!escaped) {
-        send_error(id, -32603, "failed to allocate response");
-        return;
-    }
-
-    body = (char *)malloc(strlen(escaped) + 256);
-    if (!body) {
-        send_error(id, -32603, "failed to allocate response");
-        free(escaped);
-        return;
-    }
-
-    snprintf(body, strlen(escaped) + 256,
-             "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":%s}],\"isError\":false}}",
-             id, escaped);
-    send_body(body);
-    free(body);
-    free(escaped);
-}
-
 static void append_output_hint(const char *hint)
 {
     size_t hint_len = strlen(hint);
@@ -848,6 +568,105 @@ static long long now_ms(void)
 #endif
 }
 
+typedef struct
+{
+    bool done;
+    bool failed;
+    const char *fail_reason;
+    int steps;
+} submit_outcome_t;
+
+/*
+ * Shared core for build_app and run_submit, which were previously near-identical.
+ * Assumes the emulator is booted and the submit file already fetched. Runs
+ * "submit <name_lc>", advances up to max_steps SuperSUB prompts, appends every
+ * step transcript to *log, and detects `marker` for success / output errors for
+ * failure. `st` is in/out: callers preset st->failed and st->fail_reason from the
+ * fetch stage (with st->done=false, st->steps=0). `result_label` is "BUILD" or
+ * "SUBMIT"; `timeout_reason` is the message used when the deadline elapses.
+ *
+ * On a hard transport failure it emits the JSON-RPC error itself and returns
+ * false; the caller then frees its resources and returns. On normal completion
+ * it returns true with *st and *total_ms filled and the result line appended.
+ */
+static bool run_submit_core(const char *id,
+                            const char *name_lc,
+                            const char *marker,
+                            const char *result_label,
+                            const char *timeout_reason,
+                            int max_steps,
+                            time_t deadline,
+                            long long start_ms,
+                            char **log, size_t *log_len, size_t *log_cap,
+                            submit_outcome_t *st,
+                            long long *total_ms)
+{
+    char cmd[192];
+    long long step_start;
+    int step;
+
+    snprintf(cmd, sizeof(cmd), "submit %s", name_lc);
+    step_start = now_ms();
+    if (!st->failed && !run_cpm_step(cmd, BUILD_STEP_CYCLES)) {
+        send_error(id, -32603, "failed starting submit");
+        return false;
+    }
+    if (!st->failed) {
+        snprintf(cmd, sizeof(cmd), "--- SUBMIT START (%lld ms) ---\n", now_ms() - step_start);
+        append_text(log, log_len, log_cap, cmd);
+        append_text(log, log_len, log_cap, g_output);
+        if (strstr(g_output, marker)) {
+            st->done = true;
+        } else if (output_has_error(g_output)) {
+            st->failed = true;
+            st->fail_reason = "submit failed to start";
+        }
+    }
+
+    for (step = 1; !st->done && !st->failed && step <= max_steps; step++) {
+        if (time(NULL) >= deadline) {
+            st->failed = true;
+            st->fail_reason = timeout_reason;
+            break;
+        }
+        step_start = now_ms();
+        if (!run_cpm_step("", BUILD_STEP_CYCLES)) {
+            send_error(id, -32603, "failed advancing submit");
+            return false;
+        }
+        snprintf(cmd, sizeof(cmd), "--- SUBMIT STEP %d (%lld ms) ---\n", step, now_ms() - step_start);
+        append_text(log, log_len, log_cap, cmd);
+        append_text(log, log_len, log_cap, g_output);
+        if (strstr(g_output, marker)) {
+            st->done = true;
+        } else if (output_has_error(g_output)) {
+            st->failed = true;
+            st->fail_reason = "CP/M command reported an error";
+        }
+    }
+    st->steps = step;
+
+    *total_ms = now_ms() - start_ms;
+
+    if (st->done) {
+        snprintf(cmd, sizeof(cmd), "\n%s RESULT: PASS (%lld ms) - ", result_label, *total_ms);
+        append_text(log, log_len, log_cap, cmd);
+        append_text(log, log_len, log_cap, marker);
+        append_text(log, log_len, log_cap, "\n");
+    } else if (st->failed) {
+        snprintf(cmd, sizeof(cmd), "\n%s RESULT: FAIL (%lld ms) - ", result_label, *total_ms);
+        append_text(log, log_len, log_cap, cmd);
+        append_text(log, log_len, log_cap, st->fail_reason ? st->fail_reason : "failed before completion marker");
+        append_text(log, log_len, log_cap, "\n");
+    } else {
+        snprintf(cmd, sizeof(cmd), "\n%s RESULT: INCOMPLETE (%lld ms) - completion marker not seen: ", result_label, *total_ms);
+        append_text(log, log_len, log_cap, cmd);
+        append_text(log, log_len, log_cap, marker);
+        append_text(log, log_len, log_cap, "\n");
+    }
+    return true;
+}
+
 static void handle_build_app(const char *id, const char *json)
 {
     char *app = json_get_string(json, "app");
@@ -930,67 +749,19 @@ static void handle_build_app(const char *id, const char *json)
         fail_reason = "submit file fetch failed";
     }
 
-    snprintf(cmd, sizeof(cmd), "submit %s", app_lc);
-    step_start = now_ms();
-    if (!failed && !run_cpm_step(cmd, BUILD_STEP_CYCLES)) {
-        send_error(id, -32603, "failed starting submit");
-        free(log);
-        free(app);
-        return;
-    }
-    if (!failed) {
-        snprintf(cmd, sizeof(cmd), "--- SUBMIT START (%lld ms) ---\n", now_ms() - step_start);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, g_output);
-        if (strstr(g_output, marker)) {
-            done = true;
-        } else if (output_has_error(g_output)) {
-            failed = true;
-            fail_reason = "submit failed to start";
-        }
-    }
-
-    for (step = 1; !done && !failed && step <= max_steps; step++) {
-        if (time(NULL) >= deadline) {
-            failed = true;
-            fail_reason = "build timed out";
-            break;
-        }
-        step_start = now_ms();
-        if (!run_cpm_step("", BUILD_STEP_CYCLES)) {
-            send_error(id, -32603, "failed advancing submit");
+    {
+        submit_outcome_t outcome = { false, failed, fail_reason, 0 };
+        if (!run_submit_core(id, app_lc, marker, "BUILD", "build timed out",
+                             max_steps, deadline, build_start,
+                             &log, &log_len, &log_cap, &outcome, &total_ms)) {
             free(log);
             free(app);
             return;
         }
-        snprintf(cmd, sizeof(cmd), "--- SUBMIT STEP %d (%lld ms) ---\n", step, now_ms() - step_start);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, g_output);
-        if (strstr(g_output, marker)) {
-            done = true;
-        } else if (output_has_error(g_output)) {
-            failed = true;
-            fail_reason = "CP/M command reported an error";
-        }
-    }
-
-    total_ms = now_ms() - build_start;
-
-    if (done) {
-        snprintf(cmd, sizeof(cmd), "\nBUILD RESULT: PASS (%lld ms) - ", total_ms);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, marker);
-        append_text(&log, &log_len, &log_cap, "\n");
-    } else if (failed) {
-        snprintf(cmd, sizeof(cmd), "\nBUILD RESULT: FAIL (%lld ms) - ", total_ms);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, fail_reason ? fail_reason : "build failed before completion marker");
-        append_text(&log, &log_len, &log_cap, "\n");
-    } else {
-        snprintf(cmd, sizeof(cmd), "\nBUILD RESULT: INCOMPLETE (%lld ms) - completion marker not seen: ", total_ms);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, marker);
-        append_text(&log, &log_len, &log_cap, "\n");
+        done = outcome.done;
+        failed = outcome.failed;
+        fail_reason = outcome.fail_reason;
+        step = outcome.steps;
     }
 
     if (verbose) {
@@ -1176,66 +947,21 @@ static void handle_run_submit(const char *id, const char *json)
         }
     }
 
-    snprintf(cmd, sizeof(cmd), "submit %s", sub_lc);
-    step_start = now_ms();
-    if (!failed && !run_cpm_step(cmd, BUILD_STEP_CYCLES)) {
-        send_error(id, -32603, "failed starting submit");
-        free(log);
-        free(sub);
-        free(fetch);
-        free(mark_arg);
-        return;
-    }
-    if (!failed) {
-        snprintf(cmd, sizeof(cmd), "--- SUBMIT START (%lld ms) ---\n", now_ms() - step_start);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, g_output);
-        if (strstr(g_output, marker)) {
-            done = true;
-        } else if (output_has_error(g_output)) {
-            failed = true;
-            fail_reason = "submit failed to start";
-        }
-    }
-
-    for (step = 1; !done && !failed && step <= max_steps; step++) {
-        if (time(NULL) >= deadline) {
-            failed = true;
-            fail_reason = "submit timed out";
-            break;
-        }
-        step_start = now_ms();
-        if (!run_cpm_step("", BUILD_STEP_CYCLES)) {
-            send_error(id, -32603, "failed advancing submit");
+    {
+        submit_outcome_t outcome = { false, failed, fail_reason, 0 };
+        if (!run_submit_core(id, sub_lc, marker, "SUBMIT", "submit timed out",
+                             max_steps, deadline, start_ms,
+                             &log, &log_len, &log_cap, &outcome, &total_ms)) {
             free(log);
             free(sub);
             free(fetch);
             free(mark_arg);
             return;
         }
-        snprintf(cmd, sizeof(cmd), "--- SUBMIT STEP %d (%lld ms) ---\n", step, now_ms() - step_start);
-        append_text(&log, &log_len, &log_cap, cmd);
-        append_text(&log, &log_len, &log_cap, g_output);
-        if (strstr(g_output, marker)) {
-            done = true;
-        } else if (output_has_error(g_output)) {
-            failed = true;
-            fail_reason = "CP/M command reported an error";
-        }
-    }
-
-    total_ms = now_ms() - start_ms;
-    if (done) {
-        snprintf(cmd, sizeof(cmd), "\nSUBMIT RESULT: PASS (%lld ms) - %s\n", total_ms, marker);
-        append_text(&log, &log_len, &log_cap, cmd);
-    } else if (failed) {
-        snprintf(cmd, sizeof(cmd), "\nSUBMIT RESULT: FAIL (%lld ms) - %s\n", total_ms,
-                 fail_reason ? fail_reason : "submit failed before completion marker");
-        append_text(&log, &log_len, &log_cap, cmd);
-    } else {
-        snprintf(cmd, sizeof(cmd), "\nSUBMIT RESULT: INCOMPLETE (%lld ms) - completion marker not seen: %s\n",
-                 total_ms, marker);
-        append_text(&log, &log_len, &log_cap, cmd);
+        done = outcome.done;
+        failed = outcome.failed;
+        fail_reason = outcome.fail_reason;
+        step = outcome.steps;
     }
 
     if (verbose) {
@@ -1346,108 +1072,14 @@ static void handle_tools_call(const char *id, const char *json)
     free(input);
 }
 
-static bool read_message(char **out)
-{
-    char line[512];
-    size_t content_length = 0;
-    char *body;
-    size_t len;
-    char *p;
-
-    if (!fgets(line, sizeof(line), stdin)) {
-        return false;
-    }
-
-    p = line;
-    while (isspace((unsigned char)*p)) {
-        p++;
-    }
-    if (*p == '{') {
-        len = strlen(p);
-        while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r')) {
-            p[--len] = '\0';
-        }
-        body = strdup(p);
-        if (!body) {
-            return false;
-        }
-        *out = body;
-        return true;
-    }
-
-    do {
-        if (strcmp(line, "\r\n") == 0 || strcmp(line, "\n") == 0) {
-            break;
-        }
-        if (strncasecmp(line, "Content-Length:", 15) == 0) {
-            content_length = (size_t)strtoull(line + 15, NULL, 10);
-        }
-    } while (fgets(line, sizeof(line), stdin));
-
-    if (content_length == 0 || feof(stdin)) {
-        return false;
-    }
-
-    body = (char *)malloc(content_length + 1);
-    if (!body) {
-        return false;
-    }
-    if (fread(body, 1, content_length, stdin) != content_length) {
-        free(body);
-        return false;
-    }
-    body[content_length] = '\0';
-    *out = body;
-    return true;
-}
-
-static void handle_message(const char *json)
-{
-    char *id = json_get_id(json);
-    char *method = json_get_string(json, "method");
-    char *version;
-    char init_result[512];
-
-    if (!method) {
-        free(id);
-        return;
-    }
-
-    if (!id) {
-        fprintf(stderr, "[MCP] notification: %s\n", method);
-        free(method);
-        return;
-    }
-
-    if (strcmp(method, "initialize") == 0) {
-        fprintf(stderr, "[MCP] initialize\n");
-        version = json_get_protocol_version(json);
-        snprintf(init_result, sizeof(init_result),
-                 "{\"protocolVersion\":\"%s\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"altair-cpm-build\",\"version\":\"0.1.0\"}}",
-                 version);
-        send_simple_result(id, init_result);
-        free(version);
-    } else if (strcmp(method, "tools/list") == 0) {
-        fprintf(stderr, "[MCP] tools/list\n");
-        send_simple_result(id, tools_list_result);
-    } else if (strcmp(method, "tools/call") == 0) {
-        fprintf(stderr, "[MCP] tools/call\n");
-        handle_tools_call(id, json);
-    } else if (strcmp(method, "ping") == 0) {
-        fprintf(stderr, "[MCP] ping\n");
-        send_simple_result(id, "{}");
-    } else {
-        fprintf(stderr, "[MCP] unknown method: %s\n", method);
-        send_error(id, -32601, "method not found");
-    }
-
-    free(method);
-    free(id);
-}
-
 int main(int argc, char **argv)
 {
-    char *message;
+    const jsonrpc_server_t server = {
+        .server_name = "altair-cpm-build",
+        .server_version = "0.1.0",
+        .tools_list_result = tools_list_result,
+        .on_tools_call = handle_tools_call,
+    };
 
     g_drive_a = (argc > 1) ? argv[1] : "disks/cpm63k.dsk";
     g_drive_b = (argc > 2) ? argv[2] : "disks/bdsc-v1.60.dsk";
@@ -1470,24 +1102,26 @@ int main(int argc, char **argv)
     {
         int saved_stdout = DUP(FILENO(stdout));
 
-        fflush(stdout);
-        DUP2(FILENO(stderr), FILENO(stdout));
+        /* Only redirect if we captured a restorable copy of stdout. If DUP
+         * failed we must NOT point stdout at stderr, since we could never
+         * restore it and would permanently corrupt the JSON-RPC channel. */
+        if (saved_stdout >= 0) {
+            fflush(stdout);
+            DUP2(FILENO(stderr), FILENO(stdout));
+        }
 
         environment_io_init(NULL);
         chat_io_init();
         weather_io_init();
 
-        fflush(stdout);
         if (saved_stdout >= 0) {
+            fflush(stdout);
             DUP2(saved_stdout, FILENO(stdout));
             CLOSE_FD(saved_stdout);
         }
     }
 
-    while (read_message(&message)) {
-        handle_message(message);
-        free(message);
-    }
+    jsonrpc_run(&server);
 
     host_disk_close();
     return 0;

@@ -246,3 +246,22 @@ uint8_t host_files_in(uint8_t port)
         return 0x00;
     }
 }
+
+/*
+ * ESP32-compatible interface used by the shared io_ports.c dispatch (mirror of
+ * the firmware's port_drivers/io_ports.c). On the host, FT response bytes are
+ * read back via port 60/61, so the buffer/length arguments are ignored and 0
+ * is returned, matching the ESP32 files_output() contract.
+ */
+size_t files_output(int port, uint8_t data, char *buffer, size_t buffer_length)
+{
+    (void)buffer;
+    (void)buffer_length;
+    host_files_out((uint8_t)port, data);
+    return 0;
+}
+
+uint8_t files_input(uint8_t port)
+{
+    return host_files_in(port);
+}

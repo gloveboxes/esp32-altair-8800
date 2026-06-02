@@ -12,6 +12,8 @@ set(LOCAL_DIR  ${CMAKE_CURRENT_LIST_DIR}/../altair_local)
 
 add_executable(altair-cpm-mcp
     mcp_server.c
+    json_util.c
+    jsonrpc.c
     ${LOCAL_DIR}/PortDrivers/io_ports.c
     ${LOCAL_DIR}/PortDrivers/host_chat_io.c
     ${LOCAL_DIR}/PortDrivers/environment_io.c

@@ -38,6 +38,20 @@ target_compile_options(run_8080_tests PRIVATE
 
 enable_testing()
 
+# JSON helper unit tests for the MCP server (../altair_mcp_server/json_util.c).
+# Pure host code, no emulator dependencies.
+set(MCP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../altair_mcp_server)
+add_executable(test_json_util
+    test_json_util.c
+    ${MCP_DIR}/json_util.c
+)
+target_include_directories(test_json_util PRIVATE ${MCP_DIR})
+target_compile_options(test_json_util PRIVATE
+    -Wall -Wextra
+    -D_GNU_SOURCE
+)
+add_test(NAME json_util COMMAND test_json_util)
+
 # Always-on self-test: a tiny hand-assembled 8080 program that exercises
 # ADD/SUB/CPI/JNZ/CALL/JMP and prints "SELFTEST PASS" via BDOS.
 add_test(NAME selftest COMMAND run_8080_tests --selftest)

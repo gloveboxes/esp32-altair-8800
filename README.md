@@ -268,14 +268,6 @@ Wire the Altair Front Panel Kit to the XIAO ESP32-S3 as follows:
 
 Leave `D2` / `GPIO3` unused for this wiring; Seeed documents it as a JTAG strapping-related pin at reset. The profile does not use an external SD card, so do not wire SD storage to the SPI pins above.
 
-If you want to use the checked-in full Freenove snapshot instead of regenerating from defaults:
-
-```bash
-cp sdkconfig.freenove sdkconfig
-idf.py build
-idf.py -p /dev/cu.usbmodem2101 flash monitor
-```
-
 Run `idf.py fullclean` when switching boards if you see stale build output, unexpected Kconfig values, or display-driver link/build issues. After a full clean, rerun the same `idf.py -D SDKCONFIG_DEFAULTS=... build` command for the target board.
 
 In VS Code, use the ESP-IDF extension commands after swapping the config file:
@@ -328,7 +320,6 @@ idf.py build
 - `sdkconfig.FREENOVE-ESP32-S3-LCD-2.8.defaults`: Freenove ESP32-S3 LCD 2.8 defaults.
 - `sdkconfig.LONELY_BINARY_ALTAIR_KIT.defaults`: Lonely Binary Altair Kit defaults.
 - `sdkconfig.SEEED_XIAO_ESP32_S3.defaults`: Seeed XIAO ESP32-S3 Altair Front Panel Kit defaults.
-- `sdkconfig.freenove`: full generated Freenove sdkconfig snapshot.
 - `partitions.csv`: partition layout.
 
 When changing project-level ESP-IDF settings, update the appropriate defaults file so the configuration can be reproduced.

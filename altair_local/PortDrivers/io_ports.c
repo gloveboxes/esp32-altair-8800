@@ -1,3 +1,17 @@
+/**
+ * @file io_ports.c
+ * @brief I/O port handler for the Altair 8800 host emulator and MCP server.
+ *
+ * Routes I/O port operations to the appropriate drivers based on port number.
+ *
+ * MIRROR FILE: the switch bodies below are kept structurally identical to the
+ * ESP32 firmware's port_drivers/io_ports.c, which is the SOURCE OF TRUTH for
+ * the port -> driver mapping. Only the #include block differs (host driver
+ * headers vs the firmware's port_drivers/ headers); the files driver is reached
+ * through the host files_output()/files_input() shim. When the mapping changes,
+ * update the ESP32 file first and re-sync this one.
+ */
+
 #include "io_ports.h"
 
 #include "PortDrivers/chat_io.h"
@@ -10,10 +24,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Must be large enough to hold the full ENV list response (all keys=values
- * concatenated) and any chat/weather payload. Matches the ESP32 build in
- * port_drivers/io_ports.c. A 128-byte buffer truncated long values such as
- * CHAT_OPENAI_KEY in the ENV list output. */
 #define REQUEST_BUFFER_SIZE 2048
 
 typedef struct
@@ -27,10 +37,13 @@ static request_unit_t request_unit;
 
 void io_port_out(uint8_t port, uint8_t data)
 {
-    memset(&request_unit, 0, sizeof(request_unit));
+    request_unit.len = 0;
+    request_unit.count = 0;
+    request_unit.buffer[0] = '\0';
 
     switch (port)
     {
+        // Time/timer ports
         case 24:
         case 25:
         case 26:
@@ -48,27 +61,39 @@ void io_port_out(uint8_t port, uint8_t data)
         case 44:
             request_unit.len = time_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
+
+        // Utility ports
         case 45:
         case 48:
+        case 49:
         case 70:
             request_unit.len = utility_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
-        case WEATHER_PORT_FIELD:
+
+        // Weather field port (OpenWeatherMap)
+        case 46:
             request_unit.len = weather_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
+
+        // Chat ports (OpenAI / compatible)
+        case 120:
+        case 121:
+        case 122:
+            chat_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
+            break;
+
+        // Files ports (60, 61)
         case 60:
         case 61:
-            host_files_out(port, data);
+            files_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
+
+        // Environment variable ports (NVS-backed)
         case ENVIRONMENT_PORT_COMMAND:
         case ENVIRONMENT_PORT_DATA:
             request_unit.len = environment_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
             break;
-        case CHAT_PORT_TRIGGER:
-        case CHAT_PORT_REQUEST:
-        case CHAT_PORT_RESET_RESPONSE:
-            chat_output(port, data, request_unit.buffer, sizeof(request_unit.buffer));
-            break;
+
         default:
             break;
     }
@@ -78,6 +103,7 @@ uint8_t io_port_in(uint8_t port)
 {
     switch (port)
     {
+        // Time/timer ports
         case 24:
         case 25:
         case 26:
@@ -86,23 +112,34 @@ uint8_t io_port_in(uint8_t port)
         case 29:
         case 30:
             return time_input(port);
-        case 60:
-        case 61:
-            return host_files_in(port);
-        case ENVIRONMENT_PORT_COMMAND:
-            return environment_input(port);
-        case WEATHER_PORT_STATUS:
+
+        // Weather status
+        case 47:
             return weather_input(port);
-        case CHAT_PORT_TRIGGER:
-        case CHAT_PORT_STATUS:
-        case CHAT_PORT_DATA:
-            return chat_input(port);
+
+        // Request buffer read port
         case 200:
             if (request_unit.count < request_unit.len && request_unit.count < sizeof(request_unit.buffer))
             {
                 return (uint8_t)request_unit.buffer[request_unit.count++];
             }
             return 0x00;
+
+        // Chat ports (OpenAI / compatible)
+        case 120:
+        case 123:
+        case 124:
+            return chat_input(port);
+
+        // Files ports (60, 61)
+        case 60:
+        case 61:
+            return files_input(port);
+
+        // Environment status port
+        case ENVIRONMENT_PORT_COMMAND:
+            return environment_input(port);
+
         default:
             return 0x00;
     }
