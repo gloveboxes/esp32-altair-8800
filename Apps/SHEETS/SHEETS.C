@@ -17,6 +17,9 @@
  *          Excel RAND() it is frozen to a fixed value when entered.
  *          Relative refs shift on copy/paste and row/col
  *          insert; a ref pushed off the grid renders as #REF!.
+ *          A formula that refers back to its own cell (directly or
+ *          through other cells, including a range that spans it)
+ *          is detected as a circular reference and renders #CIRC.
  *
  * Keys:
  *   Arrow keys    Move cursor
@@ -854,6 +857,8 @@ int helpsc()
     curmv(22, 4);
     cput("Relative refs shift on copy/paste; off-grid refs show #REF!.");
     curmv(23, 4);
+    cput("A cell in its own range/formula shows #CIRC (circular ref).");
+    curmv(24, 4);
     cput("Press any key to return.");
     keywt();
     rall = 1;

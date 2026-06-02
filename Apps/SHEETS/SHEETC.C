@@ -13,7 +13,44 @@
 #include "string.h"
 #include "sheets.h"
 
-/* ---- Cell helpers ---- */
+/* ---- Function-name dispatch ----
+ * A single place that recognises a built-in function name, so the
+ * parser no longer carries hand-unrolled per-character compares.
+ * fnat() tests for "NAME(" at pointer p (case-insensitive; NAME is
+ * supplied in upper case) without moving anything. fnmatch() does
+ * the same at the parser cursor epos and, on a match, advances epos
+ * past the '(' so the argument handler can run. The actual table of
+ * names and handler pointers (fnnam[]/fnfn[], dispatched by dofn)
+ * lives further down, after evcell(), because the handlers call it. */
+int fnat(p, name)
+char *p;
+char *name;
+{
+    int i;
+
+    i = 0;
+    while (name[i])
+    {
+        if (upr(p[i]) != name[i])
+            return 0;
+        i++;
+    }
+    return p[i] == '(';
+}
+
+int fnmatch(name)
+char *name;
+{
+    int i;
+
+    if (!fnat(epos, name))
+        return 0;
+    i = 0;
+    while (name[i])
+        i++;
+    epos = epos + i + 1;
+    return 1;
+}
 
 /* Return 1 if formula string 's' uses the volatile RAND() function
  * somewhere, so setcel knows to freeze it to a fixed value. */
@@ -22,9 +59,7 @@ char *s;
 {
     while (*s)
     {
-        if (upr(s[0]) == 'R' && upr(s[1]) == 'A'
-            && upr(s[2]) == 'N' && upr(s[3]) == 'D'
-            && s[4] == '(')
+        if (fnat(s, "RAND"))
             return 1;
         s++;
     }
@@ -194,8 +229,25 @@ int rndnum()
     return r & 0x7FFF;
 }
 
+/* Return 1 if cell (r,c) is already on the evaluation stack, i.e.
+ * we are in the middle of evaluating it further up the call chain.
+ * That means the formula refers back to itself directly or through
+ * other cells - a circular reference. */
+int oncyc(r, c)
+int r;
+int c;
+{
+    int k;
+
+    for (k = 0; k < edepth; k++)
+        if (evrow[k] == r && evcol[k] == c)
+            return 1;
+    return 0;
+}
+
 /* Forward-call wrapper: evaluate cell (r,c) into the 4-byte long
- * pointed to by vp. Recursion-guarded via edepth. */
+ * pointed to by vp. Cycle-guarded via the evrow/evcol stack and
+ * depth-guarded via edepth. */
 int evcell(r, c, vp)
 int r;
 int c;
@@ -218,8 +270,16 @@ char *vp;
             atol(vp, s);
         return 1;
     }
-    if (edepth > 24)
+    if (oncyc(r, c))
+    {
+        ecirc = 1;
+        eok = 0;
         return 0;
+    }
+    if (edepth >= EDMAX)
+        return 0;
+    evrow[edepth] = r;
+    evcol[edepth] = c;
     edepth++;
     sav = epos;
     epos = s + 1;
@@ -232,17 +292,196 @@ char *vp;
     return 1;
 }
 
+/* ---- Built-in function handlers ----
+ * Each handler is entered with epos positioned just past the '(' of
+ * its call. It parses its own arguments up to and including the
+ * closing ')', writes the 4-byte long result through vp, and returns
+ * 1 on success or 0 on error (after setting eok = 0). The dispatch
+ * table fnnam[]/fnfn[] pairs each name with its handler, so adding a
+ * function is one table row plus its handler - no parser edits. */
+
+/* =RAND() -> 0..32767; =RAND(n) -> 0..n-1. Frozen when entered
+ * (see setcel), unlike Excel RAND(). */
+int fnrand(vp)
+char *vp;
+{
+    char rv[4];
+    int rn;
+
+    eskp();
+    if (*epos == ')')
+    {
+        epos++;
+        itol(vp, rndnum());
+        return 1;
+    }
+    if (!expr(rv))
+        return 0;
+    eskp();
+    if (*epos != ')')
+    {
+        eok = 0;
+        return 0;
+    }
+    epos++;
+    rn = ltoi(rv);
+    if (rn <= 0)
+        itol(vp, rndnum());
+    else
+        itol(vp, rndnum() % rn);
+    return 1;
+}
+
+/* SUM/AVG/MIN/MAX/COUNT share one A1:B5 range fold, selected by
+ * 'tag' (0=SUM 1=AVG 2=MIN 3=MAX 4=COUNT). */
+int dorange(vp, tag)
+char *vp;
+int tag;
+{
+    int r, c, r2, c2;
+    int i, j;
+    int cnt;
+    int gotn;
+    char rv[4];
+    char dig[4];
+
+    if (!prsref(&r, &c)) { eok = 0; return 0; }
+    eskp();
+    if (*epos != ':') { eok = 0; return 0; }
+    epos++;
+    if (!prsref(&r2, &c2)) { eok = 0; return 0; }
+    eskp();
+    if (*epos != ')') { eok = 0; return 0; }
+    epos++;
+    itol(vp, 0);
+    cnt = 0;
+    gotn = 0;
+    for (i = r; i <= r2; i++)
+    {
+        for (j = c; j <= c2; j++)
+        {
+            /* A range that spans the formula's own cell (or any
+             * cell currently being evaluated) is a circular
+             * reference - reject it instead of counting/adding
+             * itself. This also stops COUNT from counting its own
+             * cell. */
+            if (oncyc(i, j))
+            {
+                ecirc = 1;
+                eok = 0;
+                return 0;
+            }
+            if (tag == 4)
+            {
+                if (cells[i][j] && cells[i][j][0])
+                    cnt++;
+                continue;
+            }
+            if (!evcell(i, j, rv)) { eok = 0; return 0; }
+            /* Only count cells that hold a numeric value (a number
+             * or a formula) so AVG ignores empty / text cells. */
+            if (cells[i][j] && (cells[i][j][0] == '='
+                || cells[i][j][0] == '-'
+                || isdig(cells[i][j][0])))
+                cnt++;
+            if (tag == 0 || tag == 1)
+            {
+                ladd(vp, vp, rv);
+            }
+            else if (tag == 2)
+            {
+                if (!gotn || lcomp(rv, vp) < 0)
+                {
+                    vp[0] = rv[0]; vp[1] = rv[1];
+                    vp[2] = rv[2]; vp[3] = rv[3];
+                }
+                gotn = 1;
+            }
+            else if (tag == 3)
+            {
+                if (!gotn || lcomp(rv, vp) > 0)
+                {
+                    vp[0] = rv[0]; vp[1] = rv[1];
+                    vp[2] = rv[2]; vp[3] = rv[3];
+                }
+                gotn = 1;
+            }
+        }
+    }
+    if (tag == 1)
+    {
+        if (cnt == 0) { eok = 0; return 0; }
+        itol(dig, cnt);
+        ldiv(vp, vp, dig);
+    }
+    else if (tag == 4)
+        itol(vp, cnt);
+    return 1;
+}
+
+int fnsum(vp)
+char *vp;
+{
+    return dorange(vp, 0);
+}
+
+int fnavg(vp)
+char *vp;
+{
+    return dorange(vp, 1);
+}
+
+int fnmin(vp)
+char *vp;
+{
+    return dorange(vp, 2);
+}
+
+int fnmax(vp)
+char *vp;
+{
+    return dorange(vp, 3);
+}
+
+int fncnt(vp)
+char *vp;
+{
+    return dorange(vp, 4);
+}
+
+/* Dispatch table: parallel arrays pairing each function name with
+ * its handler pointer. BDS C 1.6 has no aggregate initialisers
+ * (no "= { ... }"), and a shared uninitialised external array would
+ * collide with SHEETS.C's FORTRAN-COMMON layout, so the table is
+ * filled locally each call. To add a function, append a name/handler
+ * pair and bump the count in the loop. */
+int dofn(vp)
+char *vp;
+{
+    char *nm[6];
+    int (*fn[6])();
+    int i;
+
+    nm[0] = "RAND";  fn[0] = fnrand;
+    nm[1] = "SUM";   fn[1] = fnsum;
+    nm[2] = "AVG";   fn[2] = fnavg;
+    nm[3] = "MIN";   fn[3] = fnmin;
+    nm[4] = "MAX";   fn[4] = fnmax;
+    nm[5] = "COUNT"; fn[5] = fncnt;
+    for (i = 0; i < 6; i++)
+    {
+        if (fnmatch(nm[i]))
+            return (*fn[i])(vp);
+    }
+    return -1;
+}
+
 int factor(vp)
 char *vp;
 {
     int neg;
-    int r, c, r2, c2;
-    int i, j;
-    int tag;
-    int cnt;
-    int gotn;
-    int rn;
-    char rv[4];
+    int r, c;
+    int rc;
     char dig[4];
     char tmp[4];
 
@@ -280,164 +519,13 @@ char *vp;
             epos++;
         }
     }
-    else if ((upr(epos[0]) == 'R') && (upr(epos[1]) == 'A')
-             && (upr(epos[2]) == 'N') && (upr(epos[3]) == 'D')
-             && (epos[4] == '('))
+    else if ((rc = dofn(vp)) >= 0)
     {
-        /* =RAND()  -> random 0..32767 (hardware RNG port).
-         * =RAND(n) -> random 0..n-1 for n > 0. Frozen to a fixed
-         * value when entered (see setcel), unlike Excel RAND(). */
-        epos = epos + 5;
-        eskp();
-        if (*epos == ')')
-        {
-            epos++;
-            itol(vp, rndnum());
-        }
-        else
-        {
-            if (!expr(rv))
-                return 0;
-            eskp();
-            if (*epos != ')')
-            {
-                eok = 0;
-                return 0;
-            }
-            epos++;
-            rn = ltoi(rv);
-            if (rn <= 0)
-                itol(vp, rndnum());
-            else
-                itol(vp, rndnum() % rn);
-        }
-    }
-    else if ((upr(epos[0]) == 'S') && (upr(epos[1]) == 'U')
-             && (upr(epos[2]) == 'M') && (epos[3] == '('))
-    {
-        tag = 0;
-        epos = epos + 4;
-        goto rng;
-    }
-    else if ((upr(epos[0]) == 'A') && (upr(epos[1]) == 'V')
-             && (upr(epos[2]) == 'G') && (epos[3] == '('))
-    {
-        tag = 1;
-        epos = epos + 4;
-        goto rng;
-    }
-    else if ((upr(epos[0]) == 'M') && (upr(epos[1]) == 'I')
-             && (upr(epos[2]) == 'N') && (epos[3] == '('))
-    {
-        tag = 2;
-        epos = epos + 4;
-        goto rng;
-    }
-    else if ((upr(epos[0]) == 'M') && (upr(epos[1]) == 'A')
-             && (upr(epos[2]) == 'X') && (epos[3] == '('))
-    {
-        tag = 3;
-        epos = epos + 4;
-        goto rng;
-    }
-    else if ((upr(epos[0]) == 'C') && (upr(epos[1]) == 'O')
-             && (upr(epos[2]) == 'U') && (upr(epos[3]) == 'N')
-             && (upr(epos[4]) == 'T') && (epos[5] == '('))
-    {
-        tag = 4;
-        epos = epos + 6;
-rng:
-        if (!prsref(&r, &c))
-        {
-            eok = 0;
+        /* A built-in function name matched at epos; dofn ran its
+         * handler. rc == 1 means success (fall through to the sign
+         * fix-up below); rc == 0 means the handler failed. */
+        if (rc == 0)
             return 0;
-        }
-        eskp();
-        if (*epos != ':')
-        {
-            eok = 0;
-            return 0;
-        }
-        epos++;
-        if (!prsref(&r2, &c2))
-        {
-            eok = 0;
-            return 0;
-        }
-        eskp();
-        if (*epos != ')')
-        {
-            eok = 0;
-            return 0;
-        }
-        epos++;
-        itol(vp, 0);
-        cnt = 0;
-        gotn = 0;
-        for (i = r; i <= r2; i++)
-        {
-            for (j = c; j <= c2; j++)
-            {
-                if (tag == 4)
-                {
-                    if (cells[i][j] && cells[i][j][0])
-                        cnt++;
-                    continue;
-                }
-                if (!evcell(i, j, rv))
-                {
-                    eok = 0;
-                    return 0;
-                }
-                /* Only count cells that hold a numeric value (a
-                 * number or a formula) so AVG ignores empty and
-                 * non-numeric text cells. */
-                if (cells[i][j] && (cells[i][j][0] == '='
-                    || cells[i][j][0] == '-'
-                    || isdig(cells[i][j][0])))
-                    cnt++;
-                if (tag == 0 || tag == 1)
-                {
-                    ladd(vp, vp, rv);
-                }
-                else if (tag == 2)
-                {
-                    if (!gotn || lcomp(rv, vp) < 0)
-                    {
-                        vp[0] = rv[0];
-                        vp[1] = rv[1];
-                        vp[2] = rv[2];
-                        vp[3] = rv[3];
-                    }
-                    gotn = 1;
-                }
-                else if (tag == 3)
-                {
-                    if (!gotn || lcomp(rv, vp) > 0)
-                    {
-                        vp[0] = rv[0];
-                        vp[1] = rv[1];
-                        vp[2] = rv[2];
-                        vp[3] = rv[3];
-                    }
-                    gotn = 1;
-                }
-            }
-        }
-        if (tag == 1)
-        {
-            if (cnt == 0)
-            {
-                eok = 0;
-                return 0;
-            }
-            itol(dig, cnt);
-            ldiv(vp, vp, dig);
-        }
-        else if (tag == 4)
-        {
-            itol(vp, cnt);
-        }
     }
     else if (isal(*epos) || *epos == '$')
     {
@@ -571,10 +659,14 @@ char *buf;
             return 0;
         }
         edepth = 0;
+        ecirc = 0;
         ok = evcell(r, c, lv);
         if (!ok)
         {
-            strcpy(buf, "  #ERR    ");
+            if (ecirc)
+                strcpy(buf, "  #CIRC   ");
+            else
+                strcpy(buf, "  #ERR    ");
             buf[CWID] = 0;
             return 0;
         }

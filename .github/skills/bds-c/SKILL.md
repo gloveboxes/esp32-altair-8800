@@ -93,6 +93,42 @@ Classic symptom: `fopen("somefile", "r")` returns NULL even though the file exis
 
 When creating or editing any BDS C `.c` file, ensure line 1 (after the comment header) is `#include "stdio.h"`.
 
+## Arrays, Initializers, And Function Pointers
+
+BDS C 1.6 is pre-ANSI and has no aggregate initializer syntax. These limits bite when you try to build a clean table-driven dispatcher (e.g. mapping function names to handlers in a formula evaluator).
+
+- **No `= { ... }` initializers for arrays or structs.** A line like `char *names[] = {"A", "B", 0};` fails. The compiler reports a cascade of confusing errors depending on what you tried:
+  - `[]` (empty dimension): `Need explicit dimension size`.
+  - `[7]` with `= {`: `Missing semicolon` — part I has no aggregate-initializer grammar at all. Only scalar initializers (`int x = 5;`, `char *p = "hi";`) are supported.
+- **Do not "fix" it with an uninitialized module-level array.** Adding new uninitialized externals to only one `.c` file shifts the FORTRAN-COMMON offset layout (see the STDIO.H section) and corrupts the other units — the classic `fopen` returns NULL / `alloc` corrupts memory failure. Shared externals must be identical across every module.
+- **Scalar function pointers work.** `int (*cb)();` then call with `(*cb)(a, b);` is fine (see `Apps/SDK/DXENV.C`).
+- **Local pointer/function-pointer arrays work** because they are stack data, not externals, and you fill them with scalar assignments instead of an initializer.
+
+Working pattern — build the parallel arrays as locals inside the dispatch function and populate them at call time:
+
+```c
+int dofn(vp)
+char *vp;
+{
+    char *nm[6];
+    int (*fn[6])();
+    int i;
+
+    nm[0] = "RAND";  fn[0] = fnrand;
+    nm[1] = "SUM";   fn[1] = fnsum;
+    nm[2] = "AVG";   fn[2] = fnavg;
+    nm[3] = "MIN";   fn[3] = fnmin;
+    nm[4] = "MAX";   fn[4] = fnmax;
+    nm[5] = "COUNT"; fn[5] = fncnt;
+    for (i = 0; i < 6; i++)
+        if (fnmatch(nm[i]))
+            return (*fn[i])(vp);
+    return -1;
+}
+```
+
+This keeps a real name/handler table (each handler is its own short function), avoids initializers, and adds no new externals. Adding a function is: write the handler, add one `nm[i]`/`fn[i]` pair, bump the loop bound and the array sizes. Used in `Apps/SHEETS/SHEETC.C` to dispatch `RAND`/`SUM`/`AVG`/`MIN`/`MAX`/`COUNT`.
+
 ## Build And Test In CP/M Via The MCP Server
 
 This repo ships an MCP server at `altair_mcp_server/` that boots the Altair 8800 emulator into CP/M 2.2 on the host and exposes four tools to MCP clients:

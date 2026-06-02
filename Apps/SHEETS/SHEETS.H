@@ -17,6 +17,10 @@
 #define VCOLS  7
 #define VROWS  26
 
+/* Max formula nesting / eval-stack depth (also the cycle-check
+ * window). evrow[]/evcol[] below are sized to this. */
+#define EDMAX  25
+
 #define TITR   1
 #define HDRR   2
 #define DATR   3
@@ -90,6 +94,14 @@ int rall;
 char *epos;
 int eok;
 int edepth;
+
+/* Cell-evaluation stack for circular-reference detection: evrow[k]/
+ * evcol[k] hold the cell being evaluated at nesting level k (k <
+ * edepth). ecirc is set when a cell already on the stack is re-
+ * entered, so rndcel can render #CIRC instead of a plain #ERR. */
+int evrow[EDMAX];
+int evcol[EDMAX];
+int ecirc;
 
 /* Constant long buffers used by the evaluator; initialized in main(). */
 char lzro[4];
