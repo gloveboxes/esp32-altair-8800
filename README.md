@@ -2,6 +2,22 @@
 
 Altair 8800 emulator for ESP32-S3 boards, built and tested with ESP-IDF v6.0.1 (minimum required). The project runs an Intel 8080/Altair environment with CP/M disks, physical display output, SD-card disk storage, WiFi setup, WebSocket terminal access, Bluetooth keyboard input, and an OpenAI-compatible chat I/O port for BDS C applications.
 
+## Cloning (with submodules)
+
+This repo uses a git submodule ([wsServer](https://github.com/Theldus/wsServer) at `altair_local/external/wsServer`) for the local emulator's browser terminal. Clone recursively so it is fetched automatically:
+
+```bash
+git clone --recurse-submodules https://github.com/gloveboxes/esp32-altair-8800
+```
+
+If you already cloned without `--recurse-submodules`, initialize the submodule afterwards:
+
+```bash
+git submodule update --init altair_local/external/wsServer
+```
+
+The submodule only affects the local/docker browser terminal — the ESP32 firmware build does not require it, and the local build still succeeds without it (the `--web` browser terminal is just disabled).
+
 ## Current Hardware Support
 
 The project currently supports four ESP32-S3 board configurations:
@@ -39,16 +55,6 @@ Supported providers:
 - **OpenAI Compatible**: any OpenAI-compatible chat completions endpoint, including local Ollama endpoints such as `http://192.168.1.129:11434/v1/chat/completions`.
 
 For compatible endpoints, `http://` and `https://` are both supported. The API key is optional, which keeps local Ollama-style deployments easy to use. The model and temperature are supplied by the CP/M-side request JSON, so OpenAI and compatible endpoints use the same model-selection path.
-
-Chat I/O ports:
-
-| Port | Direction | Purpose |
-|---|---:|---|
-| 120 | OUT | Trigger request processing |
-| 121 | OUT | Request JSON byte stream |
-| 122 | OUT | Reset response stream |
-| 123 | IN | Response status |
-| 124 | IN | Response data byte |
 
 ## Boot Configuration Manager
 

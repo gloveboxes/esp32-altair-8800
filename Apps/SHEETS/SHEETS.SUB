@@ -1,7 +1,20 @@
-ft -g file://sheets/sheets.asm
-b:mac sheets $$PZ SZ
-b:load sheets
+ft -g file://sheets/sheets.c
+ft -g file://sdk/string.c
+ft -g file://sdk/string.h
+ft -g file://sdk/long.c
+
+cc string
+era string.c
+
+cc long
+era long.c
+
+cc sheets
+era string.h
+clink sheets string long
 era a:sheets.*
 a:pip a:sheets.com=sheets.com
 era sheets.*
+era string.*
+era long.*
 mcpdone sheets

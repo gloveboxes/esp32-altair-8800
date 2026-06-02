@@ -3593,13 +3593,14 @@ BRDL:   LHLD    BRP
         DAD     H
         DAD     H
         DAD     D
-        DAD     H               ; *10
+        DAD     H               ; HL = row*10
+        XCHG                    ; DE = row*10 (LHLD BRP below clobbers HL)
         LHLD    BRP
         MOV     A,M
         SUI     '0'
-        MOV     E,A
-        MVI     D,0
-        DAD     D
+        MOV     L,A
+        MVI     H,0             ; HL = digit
+        DAD     D               ; HL = row*10 + digit
         SHLD    BRROW
         LHLD    BRP
         INX     H
