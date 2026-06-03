@@ -70,6 +70,70 @@ char *s;
     return 0;
 }
 
+/* Normalise a formula to a compact canonical form: drop every space
+ * and tab, upper-case cell-reference letters, and lower-case built-in
+ * function names, so "= Sum ( a1 : b1 )" is stored as "=sum(A1:B1)".
+ * Safe because the formula grammar has no tokens in which whitespace
+ * is significant and letter case never changes meaning (there are no
+ * string literals). A run of letters that is followed (after optional
+ * spaces) by '(' is a function name -> lower case; any other letter
+ * run is a column reference -> upper case. Copies src into dst, which
+ * must hold at least strlen(src)+1 chars; returns the compacted len. */
+int normfm(dst, src)
+char *dst;
+char *src;
+{
+    int i;
+    int j;
+    int ch;
+    char run[16];
+
+    i = 0;
+    while (*src)
+    {
+        if (*src == ' ' || *src == '\t')
+        {
+            src++;
+            continue;
+        }
+        if (isal(*src))
+        {
+            j = 0;
+            while (isal(*src))
+            {
+                if (j < 15)
+                    run[j++] = *src;
+                src++;
+            }
+            run[j] = 0;
+            while (*src == ' ' || *src == '\t')
+                src++;
+            j = 0;
+            if (*src == '(')
+            {
+                while (run[j])
+                {
+                    ch = run[j++];
+                    if (ch >= 'A' && ch <= 'Z')
+                        ch = ch + 32;
+                    dst[i++] = ch;
+                }
+            }
+            else
+            {
+                while (run[j])
+                    dst[i++] = upr(run[j++]);
+            }
+        }
+        else
+        {
+            dst[i++] = *src++;
+        }
+    }
+    dst[i] = 0;
+    return i;
+}
+
 int setcel(r, c, s)
 int r;
 int c;
@@ -79,6 +143,7 @@ char *s;
     char *sav;
     char lv[4];
     char nbuf[16];
+    char nf[84];
     int n;
     int ok;
 
@@ -104,6 +169,20 @@ char *s;
         n--;
     if (n == 0)
         return 0;
+
+    /* Normalise a formula (leading '=') to compact canonical form -
+     * no interior spaces/tabs, upper-cased cell refs and lower-cased
+     * function names - so "= Sum ( a1 : b1 )" is stored and displayed
+     * as "=sum(A1:B1)". Plain text labels are left exactly as typed.
+     * nf is 84 bytes; the entry buffer is 80, so any real formula
+     * fits. (Avoid sizeof here - BDS C 1.6 mishandles it on arrays.) */
+    if (s[0] == '=' && n < 83)
+    {
+        s[n] = 0;
+        normfm(nf, s);
+        s = nf;
+        n = strlen(s);
+    }
 
     /* Freeze volatile RAND(): unlike Excel's RAND() (which re-rolls
      * on every recalc), this grid re-evaluates every visible cell
