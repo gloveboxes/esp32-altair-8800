@@ -28,7 +28,6 @@ nav:
     - Start the Emulator: "40-deploy-with-docker/17-start-container.md"
   - Build from source:
     - Introduction: "45-build-from-source/01-Introduction.md"
-
     - Build from Visual Studio Code: "45-build-from-source/03-Build-from-vs-code.md"
     - Build from Command Line:
       - Install Prerequisites:
@@ -38,6 +37,7 @@ nav:
         - Raspberry Pi OS: "45-build-from-source/Install prerequisites/04-Raspberry-Pi-users.md"
       - Build Source: "45-build-from-source/04-Compile-from-CLI.md"
     - Start the Emulator: "45-build-from-source/05-Run-the-emulator.md"
+  - Altair Apps: "70-apps/Altair-Apps.md"
   - Program the Altair:
     - Introduction: "60-programming/00-Introduction.md"
     - Manuals: "60-programming/00-Manuals.md"
