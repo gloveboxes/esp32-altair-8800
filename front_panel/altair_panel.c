@@ -76,7 +76,7 @@ static void configure_layout_and_theme(void)
     s_layout.x_address_start = 2;
     s_layout.y_ip_address = 220;
 
-    s_theme.background = 0x18C8;
+    s_theme.background = PANEL_COLOR_BLACK;
     s_theme.led_on = PANEL_COLOR_RED;
     s_theme.led_off = 0x3000;
     s_theme.text_primary = 0xEF5D;
