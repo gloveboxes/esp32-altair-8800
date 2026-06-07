@@ -1,14 +1,10 @@
 The goal of the **Altair 8800 AI Edition** is to blend the old with the new &mdash; using AI to help you build software for the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} on the ESP32-S3, Linux/macOS, Windows, and Docker. You'll pick up computing fundamentals and learn how to work alongside AI tools to write code for a 1970s computer.
 
-Along the way you'll find that AI doesn't do the thinking for you. You still need to understand the problem and steer the AI towards designs that fit a tiny computer with very little memory &mdash; a fun way to sharpen your skills and learn how real microcontroller projects come together.
-
 ## Vibe Engineering
 
-You may have heard of "vibe coding" &mdash; tossing a quick request at an AI and hoping for the best. **Vibe engineering** is the grown-up version. You're still working fast with AI, but you stay in charge: you decide how the project is structured, set the rules the AI has to follow, and check that everything actually works.
+You may have heard of "vibe coding" &mdash; tossing a quick request at an AI and hoping for the best. **Vibe engineering** is the grown-up version. AI doesn't do the thinking for you: you still need to understand the problem and steer it towards designs that fit a tiny computer with very little memory. Think of the AI as a fast but eager helper &mdash; it writes a lot of the code, but you stay in charge, deciding how the project is structured, setting the rules it follows, and reviewing everything to make sure it actually works.
 
-Think of the AI as a fast but eager helper. It writes a lot of the code, but you're the one reviewing it, understanding it, and making the calls. That's the habit this project helps you build.
-
-The best way to work is one small step at a time. Ask for a little, try it out, see what happens, then ask for the next piece. Building up your project in small, testable chunks keeps you in control, makes problems easy to spot, and helps you actually understand how everything fits together &mdash; instead of ending up with a big pile of code you don't recognise.
+The best way to work is one small step at a time: ask for a little, try it out, then ask for the next piece. Small, testable chunks keep you in control, make problems easy to spot, and help you understand how everything fits together &mdash; instead of ending up with a big pile of code you don't recognise. Along the way you'll learn plenty, not just about the Altair 8800, but about how to build real software alongside AI.
 
 Want to dig deeper? Start with [Simon Willison's post on Vibe Engineering](https://news.ycombinator.com/item?id=45503867){:target=_blank} and Andrew Orobator's [Vibe Engineering: From Random Code to Deterministic Systems](https://medium.com/@andreworobator/vibe-engineering-from-random-code-to-deterministic-systems-06e2bf87c144){:target=_blank}.
 
@@ -25,11 +21,12 @@ Head to [Get started](/start/Deploy){:target=_blank} to learn how to deploy and 
 
 The Altair project provides a fun way to learn:
 
-1. [Vibe engineer](https://en.wikipedia.org/wiki/Vibe_coding){:target=_blank} Altair 8800 applications using Intel 8080 Assembly, BDS C, and Microsoft BASIC, with help from Large Language Models (LLMs) such as Claude Sonnet or OpenAI Codex, in VS Code with GitHub Copilot.
+1. Vibe engineer Altair 8800 applications using Intel 8080 Assembly, BDS C, and Microsoft BASIC, with help from Large Language Models (LLMs) such as Claude Sonnet or OpenAI Codex, in VS Code with GitHub Copilot.
 2. Learn to build multithreaded, event-driven IoT C applications that scale from [microcontrollers](https://en.wikipedia.org/wiki/Microcontroller){:target=_blank} and [Raspberry Pis](https://en.wikipedia.org/wiki/Raspberry_Pi){:target=_blank} to desktop-class computers.
 3. Safely explore machine-level programming, including Intel 8080 Assembly, C, and BASIC development.
-4. Enjoy retro gaming and play classic games from the past.
-5. Optionally, integrate free weather and pollution cloud services from [Open Weather Map](http://openweathermap.org){:target=_blank}.
+4. Chat with AI directly from the Altair, using OpenAI cloud models or GenAI models hosted locally with Ollama or LM Studio.
+5. Enjoy retro gaming and play classic games from the past.
+6. Optionally, integrate free weather and pollution cloud services from [Open Weather Map](http://openweathermap.org){:target=_blank}.
 
 ## Retro computing with Dave Glover and the Altair 8800
 
