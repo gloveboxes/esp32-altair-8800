@@ -1,16 +1,16 @@
-site_name: Altair 8800 Emulator
+site_name: Altair 8800 AI Edition
 site_author: Dave Glover
 site_description: >-
-  Altair 8800 Emulator
-# site_url: https://github.com/gloveboxes/Altair-8800-Emulator
+  Altair 8800 AI Edition
+# site_url: https://github.com/gloveboxes/esp32-altair-8800
 
 # Repository ..................................................
-repo_name: Altair 8800 Emulator
-repo_url: https://github.com/gloveboxes/Altair-8800-Emulator
+repo_name: Altair 8800 AI Edition
+repo_url: https://github.com/gloveboxes/esp32-altair-8800
 
 # Copyright ...................................................
 copyright: >
-  Copyright &copy; 2023 - present Microsoft
+  Copyright &copy; 2023 - present Dave Glover
 
 nav:
   - Introduction: index.md

@@ -1,4 +1,4 @@
-The goal of the **Altair 8800 AI Edition** is to blend the old with the new &mdash; using AI to help you build software for the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} on the ESP32-S3, Linux/macOS, Windows, and Docker. You'll pick up computing fundamentals and learn how to work alongside AI tools to write code for a 1970s computer.
+The goal of the **Altair 8800 AI Edition** is to blend the old with the new &mdash; using AI to help you build software for the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} running on the ESP32-S3, Linux/macOS, Windows, and Docker. You'll pick up computing fundamentals and learn how to work alongside AI tools to write code for a 1970s computer.
 
 ## Vibe Engineering
 
