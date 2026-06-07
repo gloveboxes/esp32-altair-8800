@@ -1,6 +1,14 @@
-The goal of the **Altair 8800 AI Edition** is to blend the old with the latest AI developments &mdash; vibe engineering the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} platform for the ESP32-S3, Linux/macOS, Windows, and Docker. You'll learn about computing fundamentals, software development, and how to guide modern AI tools to write code for a 1970s microcomputer using a combination of Skills, MCP Servers, and Python-based symbol checking.
+The goal of the **Altair 8800 AI Edition** is to blend the old with the new &mdash; using AI to help you build software for the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} on the ESP32-S3, Linux/macOS, Windows, and Docker. You'll pick up computing fundamentals and learn how to work alongside AI tools to write code for a 1970s microcomputer.
 
-Along the way you'll discover that you still have to think through the problems and guide models towards preferred architectures that maximise limited resources &mdash; a great way to flex your dev skills and learn best-practice microcontroller development.
+Along the way you'll find that AI doesn't do the thinking for you. You still need to understand the problem and steer the AI towards designs that fit a tiny computer with very little memory &mdash; a fun way to sharpen your skills and learn how real microcontroller projects come together.
+
+## Vibe Engineering
+
+You may have heard of "vibe coding" &mdash; tossing a quick request at an AI and hoping for the best. **Vibe engineering** is the grown-up version. You're still working fast with AI, but you stay in charge: you decide how the project is structured, set the rules the AI has to follow, and check that everything actually works.
+
+Think of the AI as a fast but eager helper. It writes a lot of the code, but you're the one reviewing it, understanding it, and making the calls. That's the habit this project helps you build.
+
+Want to dig deeper? Start with [Simon Willison's post on Vibe Engineering](https://news.ycombinator.com/item?id=45503867){:target=_blank} and Andrew Orobator's [Vibe Engineering: From Random Code to Deterministic Systems](https://medium.com/@andreworobator/vibe-engineering-from-random-code-to-deterministic-systems-06e2bf87c144){:target=_blank}.
 
 The [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} kick-started the personal computer revolution. Microsoft's first product was [Altair BASIC](https://en.wikipedia.org/wiki/Altair_BASIC?azure-portal=true){:target=_blank} written for the Altair 8800 by Bill Gates and Paul Allen. At the time, Altair BASIC was a huge step forward as it allowed people to write programs using a high-level programming language.
 
