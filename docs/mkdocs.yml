@@ -82,7 +82,7 @@ plugins:
         - locale: en
           name: English
           default: true
-          site_name: Altair 8800 Emulator
+          site_name: Altair 8800 AI Edition
 
 
 theme:
