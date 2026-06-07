@@ -1,9 +1,8 @@
 # Altair Apps
 
 A collection of games and utilities that run under CP/M on the Altair 8800
-emulator and firmware. Every app in this catalog was **vibe coded** with
-[Claude](https://www.anthropic.com/claude){:target=_blank} and OpenAI
-foundation models, using a purpose-built toolchain for retro 8080 development:
+emulator and firmware. Every app in this catalog was **vibe engineered** with
+Claude and OpenAI foundation models, using a purpose-built toolchain for retro 8080 development:
 
 - **BDS C apps** were generated with the `bds-c` skill, validated with the
   `check-bds-c.py` checker, and built and run end-to-end on the
