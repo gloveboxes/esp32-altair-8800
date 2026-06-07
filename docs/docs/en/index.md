@@ -29,8 +29,7 @@ The Altair project provides a fun way to learn:
 2. Learn to build multithreaded, event-driven IoT C applications that scale from [microcontrollers](https://en.wikipedia.org/wiki/Microcontroller){:target=_blank} and [Raspberry Pis](https://en.wikipedia.org/wiki/Raspberry_Pi){:target=_blank} to desktop-class computers.
 3. Safely explore machine-level programming, including Intel 8080 Assembly, C, and BASIC development.
 4. Enjoy retro gaming and play classic games from the past.
-5. Optionally, integrate free weather and pollution cloud services from [Open Weather Map](http://openweathermap.org){:target=_blank} and [ThingsBoard](https://thingsboard.io/){:target=_blank} for telemetry and control.
-6. Optionally, stream telemetry data to the `ThingsBoard` MQTT Broker or a standalone Mosquitto MQTT Broker.
+5. Optionally, integrate free weather and pollution cloud services from [Open Weather Map](http://openweathermap.org){:target=_blank}.
 
 ## Retro computing with Dave Glover and the Altair 8800
 
