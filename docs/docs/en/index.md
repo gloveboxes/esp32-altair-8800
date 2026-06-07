@@ -1,4 +1,6 @@
-The goal of the cloud-connected Altair project is to provide a unique blend of [computing history](https://en.wikipedia.org/wiki/Retrocomputing){:target=_blank} with modern cloud computing. You'll learn about computing fundamentals, software development, and modern IoT, Data, and AI cloud services that address today's real-world IT challenges.
+The goal of the **Altair 8800 AI Edition** is to blend the old with the latest AI developments &mdash; vibe engineering the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} platform for the ESP32-S3, Linux/macOS, Windows, and Docker. You'll learn about computing fundamentals, software development, and how to guide modern AI tools to write code for a 1970s microcomputer using a combination of Skills, MCP Servers, and Python-based symbol checking.
+
+Along the way you'll discover that you still have to think through the problems and guide models towards preferred architectures that maximise limited resources &mdash; a great way to flex your dev skills and learn best-practice microcontroller development.
 
 The [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} kick-started the personal computer revolution. Microsoft's first product was [Altair BASIC](https://en.wikipedia.org/wiki/Altair_BASIC?azure-portal=true){:target=_blank} written for the Altair 8800 by Bill Gates and Paul Allen. At the time, Altair BASIC was a huge step forward as it allowed people to write programs using a high-level programming language.
 
@@ -11,7 +13,7 @@ Head to [Get started](/start/Deploy){:target=_blank} to learn how to deploy and 
 
 The Altair project provides a fun way to learn:
 
-1. [Vibe code](https://en.wikipedia.org/wiki/Vibe_coding){:target=_blank} Altair 8800 applications using Intel 8080 Assembly, BDS C, and Microsoft BASIC, with help from Large Language Models (LLMs) such as Claude Sonnet or OpenAI Codex, in VS Code with GitHub Copilot.
+1. [Vibe engineer](https://en.wikipedia.org/wiki/Vibe_coding){:target=_blank} Altair 8800 applications using Intel 8080 Assembly, BDS C, and Microsoft BASIC, with help from Large Language Models (LLMs) such as Claude Sonnet or OpenAI Codex, in VS Code with GitHub Copilot.
 2. Learn to build multithreaded, event-driven IoT C applications that scale from [microcontrollers](https://en.wikipedia.org/wiki/Microcontroller){:target=_blank} and [Raspberry Pis](https://en.wikipedia.org/wiki/Raspberry_Pi){:target=_blank} to desktop-class computers.
 3. Safely explore machine-level programming, including Intel 8080 Assembly, C, and BASIC development.
 4. Enjoy retro gaming and play classic games from the past.
