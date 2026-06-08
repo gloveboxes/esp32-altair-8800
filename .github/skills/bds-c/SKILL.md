@@ -129,6 +129,33 @@ char *vp;
 
 This keeps a real name/handler table (each handler is its own short function), avoids initializers, and adds no new externals. Adding a function is: write the handler, add one `nm[i]`/`fn[i]` pair, bump the loop bound and the array sizes. Used in `Apps/SHEETS/SHEETC.C` to dispatch `RAND`/`SUM`/`AVG`/`MIN`/`MAX`/`COUNT`.
 
+## 32-bit Longs: LONG.C
+
+BDS C 1.6 has no native `long` type (and `long long` is banned). For 32-bit signed and unsigned integer math, use the `LONG.C` package at `Apps/SDK/LONG.C` (Rob Shostak, 1982). It is the canonical 32-bit helper in this repo.
+
+A "long" is a 4-byte `char[4]` array, big-endian (byte 3 is least significant). You declare storage yourself (`char total[4];`) and pass pointers to the helpers. All function names are already 7 characters or less, so they are safe to call directly from BDS C.
+
+Signed operations:
+
+- `itol(result, n)` — int -> long.
+- `ltoi(l)` — long -> int (low 16 bits).
+- `lassign(dest, src)` — copy a long.
+- `lcomp(op1, op2)` — compare; returns >0, 0, <0.
+- `ladd` / `lsub` / `lmul` / `ldiv` / `lmod (result, op1, op2)` — arithmetic; each returns `result`.
+- `atol(result, s)` — ASCII string -> long.
+- `ltoa(result, op1)` — long -> ASCII string (`result` must hold at least 12 chars).
+
+Unsigned operations:
+
+- `utol(l, u)` — unsigned -> long.
+- `ltou(l)` — long -> unsigned (truncates to low 16 bits).
+
+Usage notes:
+
+- Every helper that produces a long takes the destination as its first argument and returns it, so calls chain: `ladd(sum, lmul(sum, sum, ten), itol(t, d));`.
+- There is no `LONG.H`; declare the helpers you call (they return `char *` / `int`) or rely on BDS C's implicit `int` for the integer-returning ones. Keep `#include "stdio.h"` first regardless.
+- In a submit file, fetch and compile `LONG.C` before the app that uses it, then link it in: `cc long`, then `clink <app> long`. See the submit-file template below, which already lists `ft -g file://sdk/long.c`.
+
 ## Build And Test In CP/M Via The MCP Server
 
 This repo ships an MCP server at `altair_mcp_server/` that boots the Altair 8800 emulator into CP/M 2.2 on the host and exposes four tools to MCP clients:
