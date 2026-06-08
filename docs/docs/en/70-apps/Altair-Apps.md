@@ -1,7 +1,7 @@
 # Altair Apps
 
 A collection of games and utilities that run under CP/M on the Altair 8800
-emulator and firmware. Every app in this catalog was **vibe engineered** with
+emulator and firmware. Every app in this catalog was **agentic engineered** with
 Claude and OpenAI foundation models, using a purpose-built toolchain for retro 8080 development:
 
 - **BDS C apps** were generated with the `bds-c` skill, validated with the
@@ -27,7 +27,7 @@ behavior.
 - [Breakout](#breakout) — brick-breaker arcade game
 - [Chat](#chat) — OpenAI / compatible chat client
 - [Clock](#clock) — 7-segment clock with weather panel
-- [Edit](#edit) — WordStar-style full-screen text editor
+- [Edit](#edit) — Nano inspired full-screen text editor
 - [ENV](#env) — environment-variable manager
 - [FT (File Transfer)](#ft-file-transfer) — download files from a Remote FT Server
 - [Mancala](#mancala) — Kalah-style bean game vs. computer

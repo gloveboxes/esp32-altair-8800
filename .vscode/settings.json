@@ -57,5 +57,8 @@
   "cmake.automaticReconfigure": false,
   "cmake.sourceDirectory": "${workspaceFolder}/.no-cmake-tools",
   "python.terminal.activateEnvironment": false,
-  "python.terminal.activateEnvInCurrentTerminal": false
+  "python.terminal.activateEnvInCurrentTerminal": false,
+  "cSpell.words": [
+    "Agentic"
+  ]
 }
