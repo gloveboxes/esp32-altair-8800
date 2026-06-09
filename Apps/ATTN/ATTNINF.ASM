@@ -17,6 +17,12 @@
 ;   Q16 weights on disk      32-bit signed, big-endian (LONG package)
 ; The 8080 has no multiply/divide/shift, so all of that is open coded.
 ;
+; Timing (see port_drivers/time_io.c):
+;   OUT 37,0 -> start/reset host stopwatch 0
+;   OUT 37,1 -> latch elapsed seconds as a 4-byte big-endian unsigned long
+;   IN  200  -> read those 4 bytes back (MSB first)
+; The total run time is printed in whole seconds after the accuracy line.
+;
 ; Build:  mac attninf  ->  load attninf  ->  ATTNINFR.COM
 ;
 ; Usage:
@@ -34,6 +40,9 @@ FPRSTR  EQU     9               ; print '$' string (DE)
 FOPEN   EQU     15              ; open file (DE = FCB)
 FRDSEQ  EQU     20              ; read sequential
 FSDMA   EQU     26              ; set DMA address
+
+SWPORT  EQU     37              ; host stopwatch 0 (see time_io.c)
+RDPORT  EQU     200             ; request/string read-back port
 
 CPMEOF  EQU     1AH             ; ^Z text terminator
 
@@ -96,6 +105,10 @@ TDONE:
         LXI     D,MLOAD
         CALL    PSTR
 
+; --- start the host stopwatch to time the whole run ----------------------
+        XRA     A
+        OUT     SWPORT          ; OUT 37,0 -> start/reset stopwatch 0
+
 ; --- load and convert the weights -----------------------------------------
         CALL    LOADW
         ORA     A
@@ -135,6 +148,21 @@ INOK:
         LHLD    NSEQ
         CALL    PRDEC
         LXI     D,MCRLF
+        CALL    PSTR
+
+; --- latch and report total run time (whole seconds) ---------------------
+        MVI     A,1
+        OUT     SWPORT          ; OUT 37,1 -> latch elapsed seconds
+        IN      RDPORT          ; byte 0 (MSB) - ignore
+        IN      RDPORT          ; byte 1       - ignore
+        IN      RDPORT          ; byte 2
+        MOV     H,A
+        IN      RDPORT          ; byte 3 (LSB)
+        MOV     L,A             ; HL = elapsed seconds (low 16 bits)
+        LXI     D,MTIME
+        CALL    PSTR
+        CALL    PRDEC
+        LXI     D,MSECS
         CALL    PSTR
 
 EXIT:   LXI     D,0080H         ; restore default DMA for the CCP
@@ -1412,6 +1440,8 @@ MARROW: DB      '-> ','$'
 MOK:    DB      ' ok',13,10,'$'
 MFAIL:  DB      ' fail',13,10,'$'
 MACC:   DB      13,10,'accuracy  ','$'
+MTIME:  DB      'run time  ','$'
+MSECS:  DB      ' s',13,10,'$'
 MCRLF:  DB      13,10,'$'
 DEFIN:  DB      'ATTN.IN',0
 
