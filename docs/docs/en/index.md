@@ -1,5 +1,15 @@
 The goal of the **Altair 8800 AI Edition** is to blend the old with the new &mdash; using AI to help you build software for the [Altair 8800](https://en.wikipedia.org/wiki/Altair_8800?azure-portal=true){:target=_blank} running on the ESP32-S3, Linux/macOS, Windows, and Docker. You'll pick up computing fundamentals and learn how to work alongside AI tools to write code for a 1970s computer.
 
+## Acknowledgements
+
+This project stands on the shoulders of the following projects:
+
+1. [A complete emulation of the Intel 8080 processor written in C99](https://github.com/superzazu/8080).
+2. [Deramp retro disks](https://deramp.com/downloads/altair/software/icom_floppy/FD3812/CPM%202.2%20Disk%20Images/).
+3. [The Altair Front Panel Kit](https://dankar.github.io/emulator/2015/04/12/altair-8800-emulator/).
+4. [CP/M Disk Operating System](https://en.wikipedia.org/wiki/CP/M).
+5. Codex and Claude Foundation models.
+
 ## Agentic Engineering
 
 You may have heard of "vibe coding" &mdash; tossing a quick request at an AI and hoping for the best. **Agentic engineering** is the grown-up version. AI doesn't do the thinking for you: you still need to understand the problem and steer it towards designs that, in our case, fit a tiny computer with very little memory. Think of the AI as a fast but eager helper &mdash; it writes a lot of the code, but you stay in charge, deciding how the project is structured, setting the rules it follows, and reviewing everything to make sure it actually works.
