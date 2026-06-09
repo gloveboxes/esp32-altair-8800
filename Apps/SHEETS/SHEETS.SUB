@@ -1,3 +1,4 @@
+b:
 ft -g file://sheets/sheets.c
 ft -g file://sheets/sheetc.c
 ft -g file://sheets/sheets.h
@@ -18,8 +19,8 @@ era sheetc.c
 era string.h
 era sheets.h
 clink sheets sheetc string long
-era a:sheets.*
-a:pip a:sheets.com=sheets.com
+era c:sheets.*
+a:pip c:sheets.com=sheets.com
 era sheets.*
 era sheetc.*
 era string.*

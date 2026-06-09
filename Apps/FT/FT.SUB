@@ -1,14 +1,12 @@
 ; Apps/FT/FT.SUB - build the MAC port of FT (Remote File Transfer client)
-b:ft -g file://ft/ft.asm
-b:ft -g file://ft/ft.asm
-b:ft -g file://ft/ft.asm
+b:
 b:ft -g file://ft/ft.asm
 
 b:mac ft
 b:load ft
 
-era a:ft.com
-a:pip a:ft.com=ft.com
+era c:ft.com
+a:pip c:ft.com=ft.com
 
 era ft.asm
 era ft.hex

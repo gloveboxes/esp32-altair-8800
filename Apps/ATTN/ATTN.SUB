@@ -1,0 +1,37 @@
+; Apps/ATTN/ATTN.SUB - driver for the ATTN apps
+; attn/11 transformer, ported from PDP-11 attn.s; needs the LONG 32-bit package
+; also builds the inference-only 8080 MAC assembly port.
+ft -g file://attn/attn.c
+ft -g file://sdk/long.c
+
+cc long
+cc attn
+
+clink attn long
+
+era c:attn.com
+a:pip c:attn.com=attn.com
+
+era long.*
+era attn.c
+era attn.crl
+era attn.com
+
+ft -g file://attn/attninf.asm
+
+b:mac attninf $$PZ SZ
+b:load attninf
+
+era c:attninfr.com
+a:pip c:attninf.com=attninf.com
+
+ft -g file://attn/attn.in
+era c:attn.in
+a:pip c:attn.in=attn.in
+
+era attn.in
+era attninf.asm
+era attninf.hex
+era attninf.com
+
+mcpdone attn

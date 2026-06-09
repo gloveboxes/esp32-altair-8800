@@ -24,6 +24,7 @@ behavior.
 
 ## Apps in this catalog
 
+- [Attn](#attn) — tiny transformer that learns to reverse a sequence
 - [Breakout](#breakout) — brick-breaker arcade game
 - [Chat](#chat) — OpenAI / compatible chat client
 - [Clock](#clock) — 7-segment clock with weather panel
@@ -35,6 +36,48 @@ behavior.
 - [Snake](#snake) — classic snake game
 - [Tetris](#tetris) — full Tetris engine
 - [TicTac](#tictac) — 5x5 Tic-Tac-Toe vs. computer
+
+---
+
+## Attn
+
+"Paper Tape is All You Need": a one-layer, one-head transformer that trains
+itself to reverse an 8-digit sequence, written in BDS C. It is a port of the
+PDP-11 assembly program `attn.s`
+([davepl/pdpsrc](https://github.com/davepl/pdpsrc/tree/main/bsd/attn)), itself
+derived from Damien Boureille's NN11 library. For background on the original
+PDP-11 version, see Dave Plummer's video
+[Paper Tape is All You Need](https://youtu.be/OUE3FSIk46g?si=Hqf_lmAycI_rA-Me).
+All math is software fixed-point — Q8 forward activations, Q15 gradients, and
+Q16 weight accumulators carried in 32-bit integers via the BDS C `LONG`
+package, since the 8080 has no hardware multiply, divide, or shift.
+
+It prints a banner, then either trains or runs inference. Training runs 350
+steps (reporting loss and accuracy every 50 steps, with a `.` heartbeat per
+step) and saves the learned weights to `ATTN.WTS` on the current drive.
+Inference reloads those weights and reverses each 8-digit sequence read from an
+input file (default `ATTN.IN`, one sequence per line). Training is slow on the
+emulated 8080 because every multiply is done in software; inference is much
+quicker.
+
+The weight file is about 5 KB (38 sectors), so run from a drive with free
+space — the A: system disk is nearly full. A sample `ATTN.IN` is installed
+alongside the program.
+
+**Run**
+
+```text
+A> ATTN -T        train, save weights to ATTN.WTS, then test
+A> ATTN           infer from ATTN.IN using the saved weights (default)
+A> ATTN <file>    infer from <file> instead of ATTN.IN
+A> ATTN -H        command-line help
+```
+
+Run `ATTN -T` once to train, then `ATTN` as often as you like to re-run
+inference without retraining. The weights and the `ATTN.IN` input file are read
+from the current drive, so log into a drive with free space (for example `C:`)
+before training. If no weights file exists yet, `ATTN` reports that and asks
+you to train first; if no input file is found it falls back to a random demo.
 
 ---
 

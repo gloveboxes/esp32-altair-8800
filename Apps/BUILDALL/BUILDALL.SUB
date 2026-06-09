@@ -1,9 +1,4 @@
-c:
-a:pip c.ccc=b:c.ccc
-a:pip cc2.com=b:cc2.com
-a:pip deff.crl=b:deff.crl
-a:pip deff2.crl=b:deff2.crl
-a:pip stdio.h=b:stdio.h
+b:
 b:ft -g sdk/dxtimer.c
 b:ft -g sdk/dxtimer.h
 b:ft -g sdk/dxterm.c
@@ -22,20 +17,20 @@ era long.c
 b:ft -g breakout/breakout.c
 b:cc breakout
 b:clink breakout dxterm dxtimer dxsys
-era a:breakout.*
-a:pip a:breakout.com=breakout.com
+era c:breakout.*
+a:pip c:breakout.com=breakout.com
 era breakout.*
 b:ft -g snake/snake.c
 b:cc snake
 b:clink snake dxterm dxsys
-era a:snake.*
-a:pip a:snake.com=snake.com
+era c:snake.*
+a:pip c:snake.com=snake.com
 era snake.*
 b:ft -g mancala/mancala.c
 b:cc mancala
 b:clink mancala dxterm dxsys
-era a:mancala.*
-a:pip a:mancala.com=mancala.com
+era c:mancala.*
+a:pip c:mancala.com=mancala.com
 era mancala.*
 b:ft -g chat/chat.c
 b:ft -g chat/chat.sys
@@ -46,29 +41,29 @@ b:cc dxenv
 b:cc chatjson
 b:cc chat
 b:clink chat chatjson dxterm dxtimer dxenv
-era a:chat.*
-a:pip a:chat.com=chat.com
-a:pip a:chat.sys=chat.sys
+era c:chat.*
+a:pip c:chat.com=chat.com
+a:pip c:chat.sys=chat.sys
 era chat.*
 era chatjson.*
 era dxenv.*
 b:ft -g tetris/tetris.c
 b:cc tetris
 b:clink tetris
-era a:tetris.*
-a:pip a:tetris.com=tetris.com
+era c:tetris.*
+a:pip c:tetris.com=tetris.com
 era tetris.*
 b:ft -g tictac/tictac.c
 b:cc tictac
 b:clink tictac dxterm dxtimer dxsys
-era a:tictac.*
-a:pip a:tictac.com=tictac.com
+era c:tictac.*
+a:pip c:tictac.com=tictac.com
 era tictac.*
 b:ft -g edit/edit.asm
 b:mac edit $$PZ SZ
 b:load edit
-era a:edit.*
-a:pip a:edit.com=edit.com
+era c:edit.*
+a:pip c:edit.com=edit.com
 era edit.*
 b:ft -g sdk/long.c
 b:cc long
@@ -80,40 +75,40 @@ era dxenv.c
 b:ft -g env/env.asm
 b:mac env
 b:load env
-era a:env.*
-a:pip a:env.com=env.com
+era c:env.*
+a:pip c:env.com=env.com
 era env.*
 b:ft -g clock/clock.c
 b:cc clock
 b:clink clock dxenv long
-era a:clock.*
-a:pip a:clock.com=clock.com
+era c:clock.*
+a:pip c:clock.com=clock.com
 era clock.*
 era dxenv.*
 b:ft -g esp32/esp32.asm
 b:mac esp32
 b:load esp32
-era a:esp32.*
-a:pip a:esp32.com=esp32.com
+era c:esp32.*
+a:pip c:esp32.com=esp32.com
 era esp32.*
 era long.*
 b:ft -g date/date.asm
 b:mac date
 b:load date
-era a:date.*
-a:pip a:date.com=date.com
+era c:date.*
+a:pip c:date.com=date.com
 era date.*
 b:ft -g autorun/autorun.asm
 b:mac autorun
 b:load autorun
-era a:autorun.*
-a:pip a:autorun.com=autorun.com
+era c:autorun.*
+a:pip c:autorun.com=autorun.com
 era autorun.*
 b:ft -g wsperf/wsperf.asm
 b:mac wsperf
 b:load wsperf
-era a:wsperf.*
-a:pip a:wsperf.com=wsperf.com
+era c:wsperf.*
+a:pip c:wsperf.com=wsperf.com
 era wsperf.*
 b:
 ft -g mcpdone/mcpdone.asm
@@ -123,11 +118,4 @@ era mcpdone.asm
 era mcpdone.hex
 era mcpdone.prn
 era mcpdone.sym
-c:
-era c.ccc
-era cc2.com
-era deff.crl
-era deff2.crl
-era stdio.h
-b:
 b:mcpdone buildall
