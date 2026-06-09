@@ -21,7 +21,6 @@ set(app_sources
     "../port_drivers/time_io.c"
     "../port_drivers/utility_io.c"
     "../port_drivers/weather_io.c"
-    "../altair8800/intel8080.c"
     "../altair8800/memory.c"
     "../altair8800/esp32_88dcdd_sd_card.c"
     "../drivers/sdcard_esp32/sdcard_esp32.c"
@@ -37,11 +36,20 @@ set(app_sources
     "../front_panel/altair_splash.c"
 )
 
+# CPU core: the ntvcm 8080/Z80 core (x80.cxx) driven in Z80 mode through
+# cpu_x80_adapter.cpp, which implements the i8080_* C API the rest of the
+# firmware uses.
+list(APPEND app_sources
+    "../altair8800/x80.cxx"
+    "../altair8800/cpu_x80_adapter.cpp"
+)
+
 idf_component_register(SRCS ${app_sources}
                        INCLUDE_DIRS "." 
                                     ".."
                                     "../front_panel"
                                     "../altair8800"
+                                    "../altair8800/x80_compat"
                                     "../disks"
                                     "../drivers/sdcard_esp32"
                                     "../drivers/bt_keyboard"
@@ -84,6 +92,22 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ESP_LCD_AXS15231B_VER_MAJOR=2
     ESP_LCD_AXS15231B_VER_MINOR=1
     ESP_LCD_AXS15231B_VER_PATCH=0
+)
+
+# The upstream ntvcm x80 core emits a handful of warnings (printf width on a
+# 32-bit host int, a deliberate switch fall-through, a tautological range
+# check in the disassembler) that this project promotes to errors. Silence
+# them for the Z80 core sources rather than patching the third-party core.
+#
+# X80_FORCE_Z80 fixes the core's instruction set to Z80 at compile time so the
+# optimizer constant-folds every fZ80Mode check and deletes the 8080-only code
+# paths -- a dedicated, branch-free Z80 core.
+set_source_files_properties(
+    "../altair8800/x80.cxx"
+    "../altair8800/cpu_x80_adapter.cpp"
+    PROPERTIES
+    COMPILE_OPTIONS "-w"
+    COMPILE_DEFINITIONS "X80_FORCE_Z80=1"
 )
 
 if(CONFIG_ALTAIR_STORAGE_INTERNAL_FLASH)

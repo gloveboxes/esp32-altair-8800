@@ -410,7 +410,7 @@ void altair_panel_run_startup_test(uint32_t duration_ms)
     present_full_panel(0, 0, 0);
 }
 
-// Raw CPU status bits as set by the emulator core (intel8080.c).
+// Raw CPU status bits as set by the emulator core (cpu_x80_adapter.cpp).
 // These don't match the panel's logical layout, so they need translating.
 #define RAW_STATUS_MEMORY_READ   0x80
 #define RAW_STATUS_PORT_INPUT    0x40

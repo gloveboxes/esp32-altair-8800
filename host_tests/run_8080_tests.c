@@ -1,10 +1,16 @@
-/* Host-side 8080 test harness.
+/* Host-side CPU test harness (8080 + Z80).
  *
- * Links the actual emulator core (../altair8800/intel8080.c) and runs
- * CP/M-style diagnostic .COM ROMs through a minimal BDOS trap. This is
- * the safety net that protects the upcoming M-cycle accuracy refactor.
+ * Links the emulator core (../altair8800/x80.cxx via cpu_x80_adapter.cpp) and
+ * runs CP/M-style diagnostic .COM ROMs through a minimal BDOS trap. This is the
+ * safety net that protects the upcoming M-cycle accuracy refactor.
  *
- * BDOS model (just enough for the standard 8080 test ROMs):
+ * This one source is mode-agnostic: it only drives the i8080_* C API and the
+ * BDOS trap. The CMake build compiles it twice -- with X80_FORCE_8080 to run
+ * the 8080 ROMs (TST8080/CPUTEST/8080PRE/8080EXM) and with X80_FORCE_Z80 to run
+ * the Z80 exercisers (zexdoc/zexall) -- so both instruction-set specializations
+ * of the single CPU core are validated by identical CP/M plumbing.
+ *
+ * BDOS model (just enough for the standard 8080 and Z80 test ROMs):
  *   - Program is loaded at 0x0100, PC := 0x0100.
  *   - 0x0000 contains HLT (sentinel); a RET to 0x0000 ends the run.
  *   - 0x0005 contains RET; before executing it we trap and synthesize
@@ -13,8 +19,8 @@
  *       C=9  -> print '$'-terminated string at DE
  *     then pop the return address and continue.
  *
- * The standard test ROMs (TST8080, CPUTEST, 8080PRE, 8080EXM) only
- * use BDOS functions 2 and 9 plus a final JMP 0 or BDOS 0 to exit, so
+ * The standard test ROMs (TST8080, CPUTEST, 8080PRE, 8080EXM, zexdoc, zexall)
+ * only use BDOS functions 2 and 9 plus a final JMP 0 or BDOS 0 to exit, so
  * no IN/OUT, sense switches, or disk controller is required.
  */
 
@@ -210,7 +216,10 @@ static int run_rom_file(const char *path, const char *name)
     fclose(f);
 
     printf("\n========== %s (%zu bytes) ==========\n", name, sz);
-    run_status_t rs = run_program(buf, sz, 5000000000ULL);
+    /* Safety ceiling only; well-behaved ROMs exit early on warm boot. The
+     * Z80 exercisers (zexdoc/zexall) execute far more instructions than the
+     * 8080 ROMs, so the cap is generous. */
+    run_status_t rs = run_program(buf, sz, 60000000000ULL);
     free(buf);
     printf("\n--- run status: ");
     switch (rs) {

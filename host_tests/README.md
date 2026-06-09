@@ -1,9 +1,18 @@
-# Intel 8080 host test harness
+# CPU host test harness (i8080 + Z80)
 
 This directory contains a host-side test harness that links the actual
-emulator core (`../altair8800/intel8080.c`) and runs CP/M-style `.COM`
-diagnostic ROMs through a minimal BDOS trap. It is the safety net that
-catches regressions in the CPU core — including any future refactor.
+emulator core (`../altair8800/x80.cxx` via `cpu_x80_adapter.cpp`) and runs
+CP/M-style `.COM` diagnostic ROMs through a minimal BDOS trap. It is the
+safety net that catches regressions in the CPU core — including any future
+refactor.
+
+The one mode-agnostic harness source (`run_8080_tests.c`) is compiled twice,
+once per CPU specialization:
+
+| Executable        | Core mode            | ROM folder        |
+| ----------------- | -------------------- | ----------------- |
+| `run_8080_tests`  | 8080 (`X80_FORCE_8080`) | `roms/`        |
+| `run_z80_tests`   | Z80  (`X80_FORCE_Z80`)  | `roms_z80/`    |
 
 The harness builds with plain CMake on the host (no ESP-IDF required).
 
@@ -11,9 +20,10 @@ The harness builds with plain CMake on the host (no ESP-IDF required).
 
 ```
 host_tests/
-├── CMakeLists.txt        Standalone host build
+├── CMakeLists.txt        Standalone host build (both executables + tests)
 ├── run_8080_tests.c      Harness: BDOS trap, ROM driver, built-in self-test
-├── roms/                 Drop standard 8080 diagnostic .COM files here
+├── roms/                 Standard 8080 diagnostic .COM files
+├── roms_z80/             Z80 exerciser .COM files (ZEXDOC, ZEXALL)
 └── README.md             This file
 ```
 
@@ -129,17 +139,42 @@ the core. Exit code is non-zero if any ROM fails.
 
 ### Via CTest
 
-Both tests are registered with CTest:
+All tests are registered with CTest:
 
 ```sh
 ctest --test-dir build-host-tests --output-on-failure
 ```
 
-The `roms` test reports `Skipped` (CTest exit code 77) when `roms/` is
-empty or missing, so a fresh checkout without the ROMs still has a
-green CI run.
+| Test           | What it runs                                  |
+| -------------- | --------------------------------------------- |
+| `json_util`    | MCP JSON helper unit tests                    |
+| `selftest`     | Built-in 8080 self-test (`run_8080_tests`)    |
+| `roms`         | 8080 diagnostic ROMs in `roms/`               |
+| `selftest_z80` | Built-in self-test on the Z80 build           |
+| `roms_z80`     | Z80 exerciser ROMs in `roms_z80/`             |
 
-## The four ROMs
+The `roms` and `roms_z80` tests report `Skipped` (CTest exit code 77)
+when their ROM folder is empty or missing, so a fresh checkout without
+the ROMs still has a green CI run.
+
+`--output-on-failure` only echoes a test's captured output when it
+**fails**, so a passing run shows just the one-line summary per test.
+To see the full per-instruction breakout (every `OK` / `PASS! crc is:…`
+line) on a passing run, use verbose mode:
+
+```sh
+ctest --test-dir build-host-tests -V              # all tests, full output
+ctest --test-dir build-host-tests -V -R roms_z80  # just the Z80 exercisers
+```
+
+Or run the harness binaries directly (same detailed output):
+
+```sh
+./build-host-tests/run_8080_tests --roms host_tests/roms
+./build-host-tests/run_z80_tests  --roms host_tests/roms_z80
+```
+
+## The 8080 ROMs
 
 | File          | Author / origin                          | Notes                                            |
 | ------------- | ---------------------------------------- | ------------------------------------------------ |
@@ -155,6 +190,23 @@ These are widely-redistributed binaries. Reliable sources:
 - The Altair Clone downloads page: <https://altairclone.com/downloads/cpu_tests/>.
 
 Place them directly in [`roms/`](roms/) (case-insensitive `.COM` extension).
+
+## The Z80 ROMs
+
+Frank Cringle's Z80 instruction exercisers (`zexdoc`/`zexall`) CRC-check
+every Z80 instruction against the post-state of a real Z80, including
+the `ix`/`iy` index registers, block moves, bit ops, and the extended
+opcodes that the 8080 lacks. They run through the same BDOS trap as the
+8080 ROMs and print `OK` for each instruction group on success.
+
+| File         | Origin        | Notes                                                          |
+| ------------ | ------------- | -------------------------------------------------------------- |
+| `ZEXDOC.COM` | Frank Cringle | Checks only the **documented** flag bits. ~2 min on a modern Mac. |
+| `ZEXALL.COM` | Frank Cringle | Also checks the **undocumented** flag bits (bits 3 & 5). Slower. |
+
+Place them directly in [`roms_z80/`](roms_z80/) (case-insensitive
+`.COM` extension). A copy of both ships in the repo under
+`references/ntvcm/z80test/`.
 
 ## How the harness works
 
@@ -173,18 +225,34 @@ just enough CP/M to run them:
 4. After each instruction the captured BDOS output is scanned
    (case-insensitively) for `ERROR` and `FAIL`. Either substring marks
    the ROM as failed.
-5. Each run has a per-ROM cycle limit (5×10⁹ cycles) so a stuck program
-   can’t hang the suite.
+5. Each run has a generous per-ROM cycle limit (6×10¹⁰ cycles) so a
+   stuck program can’t hang the suite. Well-behaved ROMs exit early on
+   warm boot, so the ceiling only matters for a broken core.
 
 No I/O ports, sense switches, disk controller, or interrupts are needed
 for these ROMs, so the harness installs no-op stubs for those callbacks.
 
+The same harness binary is compiled twice — once with `X80_FORCE_8080`
+(`run_8080_tests`) and once with `X80_FORCE_Z80` (`run_z80_tests`) — so
+both instruction-set specializations of the single CPU core are
+exercised by identical CP/M plumbing.
+
 ## CLI
 
+`run_8080_tests` and `run_z80_tests` share the same CLI (only the forced
+CPU mode differs):
+
 ```
-run_8080_tests --selftest               run built-in 8080 self-test
-run_8080_tests --roms <directory>       run all .COM files in <directory>
-run_8080_tests                          selftest + roms in host_tests/roms
+<exe> --selftest               run the built-in self-test
+<exe> --roms <directory>       run all .COM files in <directory>
+<exe>                          selftest + roms in host_tests/roms
+```
+
+For example:
+
+```sh
+./build-host-tests/run_8080_tests --roms host_tests/roms
+./build-host-tests/run_z80_tests  --roms host_tests/roms_z80
 ```
 
 Exit codes:
@@ -197,8 +265,9 @@ Exit codes:
 ## Adding new tests
 
 For new programs you want to validate against the core, the easiest
-path is to drop the assembled `.COM` file into `roms/` — anything in
-that directory is picked up automatically. For C-side unit tests of
-specific instructions, add a new `add_test` entry in `CMakeLists.txt`
-and either embed the program as a byte array (see `selftest_program[]`
-in `run_8080_tests.c`) or load it from disk.
+path is to drop the assembled `.COM` file into `roms/` (8080) or
+`roms_z80/` (Z80) — anything in those directories is picked up
+automatically. For C-side unit tests of specific instructions, add a
+new `add_test` entry in `CMakeLists.txt` and either embed the program
+as a byte array (see `selftest_program[]` in `run_8080_tests.c`) or load
+it from disk.

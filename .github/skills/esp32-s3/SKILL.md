@@ -39,7 +39,7 @@ disks/               CP/M disk images and generated disk headers
 Most firmware sources are compiled into a **single `main` component**:
 `main/CMakeLists.txt` lists them in the `app_sources` variable using relative
 paths into the sibling folders (e.g. `../port_drivers/chat_io.c`,
-`../altair8800/intel8080.c`, `../front_panel/...`) and registers them with one
+`../altair8800/x80.cxx`, `../front_panel/...`) and registers them with one
 `idf_component_register(...)` call. Folders like `altair8800/`, `front_panel/`,
 `port_drivers/`, and `captive_portal/` are **not** standalone IDF components —
 they have no own `CMakeLists.txt`. Only a few helpers under `drivers/`

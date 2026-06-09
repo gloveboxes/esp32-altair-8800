@@ -1,0 +1,4 @@
+# Drop CP/M .COM Z80 diagnostic ROMs here. Suggested files:
+#   ZEXDOC.COM    - Frank Cringle Z80 exerciser, documented flags only
+#   ZEXALL.COM    - Frank Cringle Z80 exerciser, all flags incl. undocumented
+# A copy of both ships under references/ntvcm/z80test/.

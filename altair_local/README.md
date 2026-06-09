@@ -2,7 +2,7 @@
 
 `altair-local` is a host build of the Altair 8800 emulator for quick CP/M app
 testing in a local terminal. It uses the universal 88-DCDD disk controller and
-the same `intel8080.c` / `memory.c` core as the ESP32 firmware. Terminal I/O
+the same `x80.cxx` / `memory.c` core as the ESP32 firmware. Terminal I/O
 runs through stdio by default (or, with `--web`, through the same browser
 terminal the ESP32 firmware serves) and the file transfer / time / utility /
 chat ports use host-side port drivers. Boots from the disk images in the
