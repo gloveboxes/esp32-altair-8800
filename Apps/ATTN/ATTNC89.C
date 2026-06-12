@@ -1,27 +1,53 @@
-#include "stdio.h"
+#include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /*
- * ATTN - "Paper Tape is All You Need"
+ * ATTNC89 - "Paper Tape is All You Need"
  *
- * A 1-layer, 1-head transformer trained to reverse an 8-digit
- * sequence.  This is a BDS C 1.6 / CP/M port of the PDP-11 2.11BSD
- * assembly program attn.s (davepl/pdpsrc), itself a port of the
- * NN11 library by Damien Boureille (dbrll/ATTN-11).
+ * A 1-layer, 1-head transformer trained to reverse an 8-digit sequence.
  *
- * Numerics (faithful to the original):
+ * This is the dcc C89 (CP/M 2.2 / Z80) port of the BDS C 1.6 program
+ * Apps/ATTN/ATTN.C, itself a port of the PDP-11 2.11BSD assembly attn.s
+ * (davepl/pdpsrc) and the NN11 library by Damien Boureille (dbrll/ATTN-11).
+ *
+ * What changed vs. the BDS C original, and why it is faster/smaller:
+ *
+ *   1. Native 32-bit `long`.  BDS C had no 32-bit type, so every Q16
+ *      operation went through the LONG package (char[4] buffers plus the
+ *      itol/ltoi/lmul/ladd/lsub/ldiv/lcomp builtins - a function call per
+ *      op).  dcc has a real `long`, so the fixed-point helpers collapse to
+ *      ordinary arithmetic and the hot loops (vdot, mvmul, vtmul, ...) run
+ *      far faster with much less code.
+ *
+ *   2. The Q16 weight arrays are now `long[]` instead of char[N*4].  dcc
+ *      stores `long` LITTLE-ENDIAN (Z80-native), so the weights written to
+ *      ATTN.WTS are little-endian - unlike the BDS C LONG package, which
+ *      stored them big-endian.  The companion inference port ATTNZ80.MAC
+ *      has been updated to read little-endian to match this file.
+ *
+ *   3. Aggregate initializers replace the hand-written initex()/initlg()
+ *      table fillers (BDS C had no array initializers; dcc does).
+ *
+ *   4. POSIX byte I/O (open/read/write from <fcntl.h>/<unistd.h>) replaces
+ *      BDS C's 128-byte sector creat/open/read/write.  The six weight
+ *      blocks are exact multiples of 128 bytes, so the on-disk layout is
+ *      identical apart from the endianness change in (2).
+ *
+ * Numerics (faithful to ATTN.C):
  *   Q8  forward activations   (int, value = real * 256)
  *   Q15 backward gradients    (int)
- *   Q16 weight accumulators   (32-bit, via the BDS C LONG package)
+ *   Q16 weight accumulators   (long, value = real * 65536)
  *
- * The 8080 has no hardware multiply/divide/shift, so all 32-bit
- * fixed-point math goes through LONG.C (the long() builtin).  The
- * training run is SLOW on a real/emulated 8080; lower NSTEP for a
- * quick demonstration.
+ * Build (from the dcc repo, with DCC/DCCPEEP/DCCRTLSTRIP exported):
+ *   ./ma.sh attnc89 peep        -> ATTNC89.COM
  *
  * Usage:
- *   attn -t   train, save weights to ATTN.WTS on the current drive, then test
- *   attn      run inference using the saved weights (default)
- *   attn -h   help
+ *   attnc89 -t      train, save weights to ATTN.WTS, then test
+ *   attnc89         run inference using the saved weights (default)
+ *   attnc89 <file>  run inference on <file> instead of ATTN.IN
+ *   attnc89 -h      help
  */
 
 #define D 16            /* d_model            */
@@ -32,16 +58,12 @@
 #define RPRT 50         /* report interval     */
 #define FSTEP 10        /* mix in IFILE every n steps */
 
-/* Trained weights are saved here so inference can reload them.
- * The Q16 accumulator arrays are exact multiples of 128 bytes, so
- * they map onto whole CP/M sectors for raw read()/write().          */
-#define WFILE "ATTN.WTS"
-#define STKE 5          /* wtke  = V*D*4 = 640  bytes = 5 sectors */
-#define SPSE 4          /* wpse  = S*D*4 = 512  bytes = 4 sectors */
-#define SWQ  8          /* wwq/wwk/wwv = D*D*4 = 1024 bytes = 8 sectors */
-#define SWOT 5          /* wwot  = D*V*4 = 640  bytes = 5 sectors */
+#define ERROR (-1)
 
-/* Default inference input file: one S-digit sequence per line.       */
+/* Trained weights are saved here so inference can reload them. */
+#define WFILE "ATTN.WTS"
+
+/* Default inference input file: one S-digit sequence per line. */
 #define IFILE "ATTN.IN"
 
 /* WORK layout: Q | K | V | A(scores), each S*D except A is S*S */
@@ -50,13 +72,13 @@
 #define VB (2*S*D)
 #define AB (3*S*D)
 
-/* --- Q16 weight accumulators (4 bytes per weight, big-endian) --- */
-char wtke[V*D*4];       /* token embed  */
-char wpse[S*D*4];       /* pos embed    */
-char wwq[D*D*4];        /* Wq           */
-char wwk[D*D*4];        /* Wk           */
-char wwv[D*D*4];        /* Wv           */
-char wwot[D*V*4];       /* Wout         */
+/* --- Q16 weight accumulators (native little-endian long) --- */
+long wtke[V*D];         /* token embed  */
+long wpse[S*D];         /* pos embed    */
+long wwq[D*D];          /* Wq           */
+long wwk[D*D];          /* Wk           */
+long wwv[D*D];          /* Wv           */
+long wwot[D*V];         /* Wout         */
 
 /* --- Q8 weight copies (rebuilt from the Q16 accumulators) --- */
 int qtke[V*D];
@@ -90,10 +112,6 @@ int dvv[S*D];           /* dV                        */
 int dxx[S*D];           /* dX                        */
 int dtmp[D];            /* temp column vector        */
 
-/* --- lookup tables --- */
-int exptbl[256];        /* exp(-i/32) in Q8          */
-int logtbl[257];        /* -ln(x/256)*4096 in Q12    */
-
 /* --- training data / state --- */
 int tokens[S];
 int target[S];
@@ -105,86 +123,146 @@ int tstep;
 int fhits;
 int vhits;
 
+/* --- lookup tables (aggregate initialised; BDS C used init functions) --- */
+
+/* exp(-i/32) in Q8 */
+int exptbl[256] = {
+    256,248,240,233,226,219,212,206,199,193,187,182,176,171,165,160,
+    155,150,146,141,137,133,129,125,121,117,114,110,107,103,100,97,
+    94,91,88,86,83,81,78,76,73,71,69,67,65,63,61,59,
+    57,55,54,52,50,49,47,46,44,43,42,41,39,38,37,36,
+    35,34,33,32,31,30,29,28,27,26,25,25,24,23,22,22,
+    21,20,20,19,19,18,17,17,16,16,15,15,14,14,14,13,
+    13,12,12,12,11,11,11,10,10,10,9,9,9,8,8,8,
+    8,7,7,7,7,7,6,6,6,6,6,5,5,5,5,5,
+    5,5,4,4,4,4,4,4,4,4,3,3,3,3,3,3,
+    3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
+
+/* -ln(x/256)*4096 in Q12.  Indexed by a Q8 probability p only under the
+ * `if (p < 256)` guard in closs(), so index 256 (p == 1.0) is never read;
+ * the table is 256 entries (dcc caps an initializer list at 256 elements). */
+int logtbl[256] = {
+    22713,22713,19874,18213,17035,16121,15374,14743,14196,13713,
+    13282,12891,12535,12207,11903,11621,11357,11108,10874,10653,
+    10443,10243,10052,9870,9696,9529,9368,9213,9064,8921,
+    8782,8647,8517,8391,8269,8150,8035,7923,7813,7707,
+    7603,7502,7404,7307,7213,7121,7031,6943,6857,6772,
+    6689,6608,6529,6451,6374,6299,6225,6153,6081,6011,
+    5943,5875,5808,5743,5678,5615,5552,5491,5430,5370,
+    5311,5253,5196,5139,5084,5029,4974,4921,4868,4816,
+    4764,4713,4663,4613,4564,4516,4468,4421,4374,4328,
+    4282,4237,4192,4148,4104,4060,4017,3975,3933,3891,
+    3850,3810,3769,3729,3690,3650,3612,3573,3535,3497,
+    3460,3423,3386,3350,3314,3278,3242,3207,3172,3138,
+    3103,3069,3036,3002,2969,2936,2904,2871,2839,2807,
+    2776,2744,2713,2682,2651,2621,2591,2561,2531,2501,
+    2472,2443,2414,2385,2357,2328,2300,2272,2244,2217,
+    2189,2162,2135,2108,2082,2055,2029,2003,1977,1951,
+    1925,1900,1874,1849,1824,1799,1774,1750,1725,1701,
+    1677,1653,1629,1605,1582,1558,1535,1512,1488,1466,
+    1443,1420,1397,1375,1353,1330,1308,1286,1265,1243,
+    1221,1200,1178,1157,1136,1115,1094,1073,1052,1032,
+    1011,991,970,950,930,910,890,870,850,831,
+    811,792,772,753,734,715,696,677,658,639,
+    621,602,584,565,547,529,511,492,474,457,
+    439,421,403,386,368,351,333,316,299,281,
+    264,247,230,213,197,180,163,147,130,114,
+    97,81,65,48,32,16
+};
+
+/* --- forward declarations --- */
+static int  lci(long a);
+static int  lq8(long a);
+static int  mq8(int a, int b);
+static int  fxdiv(int a, int b);
+static int  asr(int v, int n);
+static void addcl(int *dst, int v);
+static int  subcl(int a, int b);
+static int  vmax(int *vec, int n, int *pidx);
+static int  vdot(int *x, int *y, int n);
+static void vcpy(int *src, int *dst, int n);
+static void vclr(int *p, int n);
+static void vsadd(int sc, int *src, int *dst, int n);
+static void sftmx(int *vec, int n);
+static void mvmul(int *mat, int *vin, int *vout, int rows, int cols);
+static void mvadd(int *mat, int *vin, int *vout, int rows, int cols);
+static void vtmul(int *mat, int *vin, int *vout, int rows, int cols);
+static void outer(int *mat, int *vx, int *vy, int rows, int cols);
+static void embed(void);
+static void attn(void);
+static void proj(void);
+static void forwrd(void);
+static void cv1(long *w, int *q, int n);
+static void cvt16(void);
+static int  rndnum(void);
+static void in_fil(long *w, int n);
+static void initw(void);
+static void up_do(long *w, int *g, int n, int shift);
+static void updat(void);
+static void zerog(void);
+static void bkwrd(void);
+static void mktarg(void);
+static void gensm(void);
+static void trseq(void);
+static int  ckseq(void);
+static int  filrun(char *fname, int trn);
+static void count(void);
+static int  closs(void);
+static int  lossfr(int loss);
+static void report(void);
+static void test(void);
+static int  infseq(void);
+static int  runfil(char *fname);
+static int  savew(void);
+static int  loadw(void);
+static unsigned elapsed(void);
+
 /* ============================================================ */
-/* 32-bit fixed-point helpers (LONG package)                    */
+/* 32-bit fixed-point helpers (native long)                     */
 /* ============================================================ */
 
 /* clamp a 32-bit long to a signed 16-bit int */
-int lci(a)
-char *a;
+static int lci(long a)
 {
-    char hi[4], lo[4];
-
-    itol(hi, 32767);
-    if (lcomp(a, hi) > 0)
+    if (a > 32767L)
         return 32767;
-    itol(lo, -32768);
-    if (lcomp(a, lo) < 0)
+    if (a < -32768L)
         return -32768;
-    return ltoi(a);
+    return (int)a;
 }
 
-/* a (Q16 long) >> 8 -> clamped Q8 int */
-int lq8(a)
-char *a;
+/* a (Q16 long) >> 8 -> clamped Q8 int.
+ * Truncates toward zero (matching the BDS C ldiv and the ATTNZ80.MAC LQ8
+ * helper), so it divides the magnitude and re-applies the sign rather than
+ * using an arithmetic shift (which would floor for negatives). */
+static int lq8(long a)
 {
-    char q[4], d[4];
-
-    itol(d, 256);
-    ldiv(q, a, d);
-    return lci(q);
-}
-
-/* out (long) = a * b  (signed 16x16 -> 32) */
-prod32(out, a, b)
-char *out;
-int a, b;
-{
-    char la[4], lb[4];
-
-    itol(la, a);
-    itol(lb, b);
-    lmul(out, la, lb);
-}
-
-/* acc += a * b */
-lmac(acc, a, b)
-char *acc;
-int a, b;
-{
-    char p[4];
-
-    prod32(p, a, b);
-    ladd(acc, acc, p);
+    if (a < 0)
+        return lci(-((-a) >> 8));
+    return lci(a >> 8);
 }
 
 /* (a * b) >> 8 -> clamped Q8 int */
-int mq8(a, b)
-int a, b;
+static int mq8(int a, int b)
 {
-    char p[4];
-
-    prod32(p, a, b);
-    return lq8(p);
+    return lq8((long)a * b);
 }
 
-/* Q8 divide: (a << 8) / b -> clamped Q8 int */
-int fxdiv(a, b)
-int a, b;
+/* Q8 divide: (a << 8) / b -> clamped Q8 int (a >= 0, b > 0 at all call sites) */
+static int fxdiv(int a, int b)
 {
-    char la[4], c[4], num[4], lb[4], q[4];
-
-    itol(la, a);
-    itol(c, 256);
-    lmul(num, la, c);
-    itol(lb, b);
-    ldiv(q, num, lb);
-    return lci(q);
+    return lci(((long)a * 256L) / (long)b);
 }
 
 /* arithmetic shift right by n (floor toward -inf), n small */
-int asr(v, n)
-int v, n;
+static int asr(int v, int n)
 {
     int d, q;
 
@@ -198,38 +276,22 @@ int v, n;
 }
 
 /* *dst += v, saturating to signed 16-bit */
-addcl(dst, v)
-int *dst;
-int v;
+static void addcl(int *dst, int v)
 {
-    char a[4], b[4], s[4];
-
-    itol(a, *dst);
-    itol(b, v);
-    ladd(s, a, b);
-    *dst = lci(s);
+    *dst = lci((long)*dst + v);
 }
 
 /* a - b, saturating to signed 16-bit */
-int subcl(a, b)
-int a, b;
+static int subcl(int a, int b)
 {
-    char la[4], lb[4], s[4];
-
-    itol(la, a);
-    itol(lb, b);
-    lsub(s, la, lb);
-    return lci(s);
+    return lci((long)a - b);
 }
 
 /* ============================================================ */
 /* Vector primitives                                            */
 /* ============================================================ */
 
-int vmax(vec, n, pidx)
-int *vec;
-int n;
-int *pidx;
+static int vmax(int *vec, int n, int *pidx)
 {
     int mx, mi, i;
 
@@ -244,22 +306,18 @@ int *pidx;
     return mx;
 }
 
-int vdot(x, y, n)
-int *x, *y;
-int n;
+static int vdot(int *x, int *y, int n)
 {
-    char acc[4];
+    long acc;
     int i;
 
-    itol(acc, 0);
+    acc = 0;
     for (i = 0; i < n; i++)
-        lmac(acc, x[i], y[i]);
+        acc += (long)x[i] * y[i];
     return lq8(acc);
 }
 
-vcpy(src, dst, n)
-int *src, *dst;
-int n;
+static void vcpy(int *src, int *dst, int n)
 {
     int i;
 
@@ -267,9 +325,7 @@ int n;
         dst[i] = src[i];
 }
 
-vclr(p, n)
-int *p;
-int n;
+static void vclr(int *p, int n)
 {
     int i;
 
@@ -278,10 +334,7 @@ int n;
 }
 
 /* dst[k] += (scalar * src[k]) >> 8, saturating */
-vsadd(sc, src, dst, n)
-int sc;
-int *src, *dst;
-int n;
+static void vsadd(int sc, int *src, int *dst, int n)
 {
     int k;
 
@@ -290,9 +343,7 @@ int n;
 }
 
 /* softmax in place (Q8), LUT-based */
-sftmx(vec, n)
-int *vec;
-int n;
+static void sftmx(int *vec, int n)
 {
     int i, mx, d, idx, sum, dummy;
 
@@ -317,45 +368,39 @@ int n;
 /* ============================================================ */
 
 /* vout[i] = sum_j mat[i][j] * vin[j]  (Q16 accum, >>8, clamp) */
-mvmul(mat, vin, vout, rows, cols)
-int *mat, *vin, *vout;
-int rows, cols;
+static void mvmul(int *mat, int *vin, int *vout, int rows, int cols)
 {
-    char acc[4];
+    long acc;
     int i, j, mi;
 
     mi = 0;
     for (i = 0; i < rows; i++) {
-        itol(acc, 0);
+        acc = 0;
         for (j = 0; j < cols; j++)
-            lmac(acc, mat[mi + j], vin[j]);
+            acc += (long)mat[mi + j] * vin[j];
         vout[i] = lq8(acc);
         mi = mi + cols;
     }
 }
 
 /* vout[i] += sum_j mat[i][j] * vin[j]  (saturating add) */
-mvadd(mat, vin, vout, rows, cols)
-int *mat, *vin, *vout;
-int rows, cols;
+static void mvadd(int *mat, int *vin, int *vout, int rows, int cols)
 {
-    char acc[4];
+    long acc;
     int i, j, mi;
 
     mi = 0;
     for (i = 0; i < rows; i++) {
-        itol(acc, 0);
+        acc = 0;
         for (j = 0; j < cols; j++)
-            lmac(acc, mat[mi + j], vin[j]);
+            acc += (long)mat[mi + j] * vin[j];
         addcl(&vout[i], lq8(acc));
         mi = mi + cols;
     }
 }
 
 /* vout[j] = sum_i (mat[i][j] * vin[i]) >> 8   (per-product Q8) */
-vtmul(mat, vin, vout, rows, cols)
-int *mat, *vin, *vout;
-int rows, cols;
+static void vtmul(int *mat, int *vin, int *vout, int rows, int cols)
 {
     int i, j, sc, mi;
 
@@ -371,9 +416,7 @@ int rows, cols;
 }
 
 /* mat[i][j] += (vx[i] * vy[j]) >> 8   (saturating) */
-outer(mat, vx, vy, rows, cols)
-int *mat, *vx, *vy;
-int rows, cols;
+static void outer(int *mat, int *vx, int *vy, int rows, int cols)
 {
     int i, j, sc, mi;
 
@@ -391,7 +434,7 @@ int rows, cols;
 /* ============================================================ */
 
 /* X[i] = tok_emb[tokens[i]] + pos_emb[i] */
-embed()
+static void embed(void)
 {
     int i, j, tok, oi;
 
@@ -405,7 +448,7 @@ embed()
 }
 
 /* self-attention forward pass */
-attn()
+static void attn(void)
 {
     int i, j;
 
@@ -432,7 +475,7 @@ attn()
 }
 
 /* logits[i] = Wout^T . Y[i] */
-proj()
+static void proj(void)
 {
     int i;
 
@@ -440,7 +483,7 @@ proj()
         vtmul(qwot, &yy[i * D], &logits[i * V], D, V);
 }
 
-forwrd()
+static void forwrd(void)
 {
     embed();
     attn();
@@ -452,18 +495,15 @@ forwrd()
 /* ============================================================ */
 
 /* convert one Q16 weight group to its Q8 copy */
-cv1(w, q, n)
-char *w;
-int *q;
-int n;
+static void cv1(long *w, int *q, int n)
 {
     int i;
 
     for (i = 0; i < n; i++)
-        q[i] = lq8(w + (i << 2));
+        q[i] = lq8(w[i]);
 }
 
-cvt16()
+static void cvt16(void)
 {
     cv1(wtke, qtke, V * D);
     cv1(wpse, qpse, S * D);
@@ -474,29 +514,24 @@ cvt16()
 }
 
 /* 15-bit LCG */
-int rndnum()
+static int rndnum(void)
 {
     rseed = (rseed * 25173 + 13849) & 0x7FFF;
     return rseed;
 }
 
 /* fill n Q16 weights with random Q8 in [-128,127] */
-in_fil(w, n)
-char *w;
-int n;
+static void in_fil(long *w, int n)
 {
     int i, r;
-    char t[4], c[4];
 
     for (i = 0; i < n; i++) {
         r = (rndnum() & 0x00FF) - 128;
-        itol(t, r);
-        itol(c, 256);
-        lmul(w + (i << 2), t, c);
+        w[i] = (long)r * 256L;
     }
 }
 
-initw()
+static void initw(void)
 {
     in_fil(wtke, V * D);
     in_fil(wpse, S * D);
@@ -507,24 +542,18 @@ initw()
 }
 
 /* w_q16 -= grad_q15 >> (shift-1); zero grad after read */
-up_do(w, g, n, shift)
-char *w;
-int *g;
-int n, shift;
+static void up_do(long *w, int *g, int n, int shift)
 {
     int i, delta;
-    char d[4], nw[4];
 
     for (i = 0; i < n; i++) {
         delta = asr(g[i], shift - 1);
         g[i] = 0;
-        itol(d, delta);
-        lsub(nw, w + (i << 2), d);
-        lassign(w + (i << 2), nw);
+        w[i] -= (long)delta;
     }
 }
 
-updat()
+static void updat(void)
 {
     up_do(wtke, gtke, V * D, 4);
     up_do(wpse, gpse, S * D, 4);
@@ -534,7 +563,7 @@ updat()
     up_do(wwot, gwot, D * V, 6);
 }
 
-zerog()
+static void zerog(void)
 {
     vclr(gtke, V * D);
     vclr(gpse, S * D);
@@ -548,7 +577,7 @@ zerog()
 /* Backward pass                                                */
 /* ============================================================ */
 
-bkwrd()
+static void bkwrd(void)
 {
     int i, j, k, o, tok, dad, t;
 
@@ -620,7 +649,7 @@ bkwrd()
 /* ============================================================ */
 
 /* set reversal target for the current tokens */
-mktarg()
+static void mktarg(void)
 {
     int i;
 
@@ -629,7 +658,7 @@ mktarg()
 }
 
 /* generate a random reversal sample */
-gensm()
+static void gensm(void)
 {
     int i;
 
@@ -639,7 +668,7 @@ gensm()
 }
 
 /* train one current tokens/target sample */
-trseq()
+static void trseq(void)
 {
     cvt16();
     forwrd();
@@ -649,7 +678,7 @@ trseq()
 }
 
 /* quiet accuracy check for one current tokens/target sample */
-int ckseq()
+static int ckseq(void)
 {
     int i, idx, ok;
 
@@ -664,9 +693,7 @@ int ckseq()
 }
 
 /* read fixed samples from fname. trn=1 trains; trn=0 validates quietly. */
-int filrun(fname, trn)
-char *fname;
-int trn;
+static int filrun(char *fname, int trn)
 {
     int ch, i, n;
     FILE *fp;
@@ -681,7 +708,7 @@ int trn;
         vhits = 0;
         cvt16();
     }
-    while ((ch = fgetc(fp)) != EOF && ch != 26) {
+    while ((ch = getc(fp)) != EOF && ch != 26) {
         if (ch >= '0' && ch <= '9') {
             if (i < S)
                 tokens[i] = ch - '0';
@@ -711,7 +738,7 @@ int trn;
 }
 
 /* count correct argmax predictions */
-count()
+static void count(void)
 {
     int i, idx;
 
@@ -724,70 +751,53 @@ count()
 }
 
 /* average cross-entropy loss (Q12) for the current sample */
-int closs()
+static int closs(void)
 {
-    char acc[4], inc[4], d8[4], q[4];
+    long acc;
     int i, k, p, t;
 
-    itol(acc, 0);
+    acc = 0;
     for (i = 0; i < S; i++) {
         for (k = 0; k < V; k++)
             dl[k] = logits[i * V + k];
         sftmx(dl, V);
         t = target[i];
         p = dl[t];
-        if (p < 256) {
-            itol(inc, logtbl[p]);
-            ladd(acc, acc, inc);
-        }
+        if (p < 256)
+            acc += (long)logtbl[p];
     }
-    itol(d8, 8);
-    ldiv(q, acc, d8);
-    return ltoi(q);
+    return (int)(acc / 8L);
 }
 
 /* fractional part (0-9999) of a Q12 value */
-int lossfr(loss)
-int loss;
+static int lossfr(int loss)
 {
-    char a[4], b[4], p[4], d[4], q[4];
     int fr;
 
     fr = loss & 0x0FFF;
-    itol(a, fr);
-    itol(b, 10000);
-    lmul(p, a, b);
-    itol(d, 4096);
-    ldiv(q, p, d);
-    return ltoi(q);
+    return (int)(((long)fr * 10000L) / 4096L);
 }
 
 /* print step / loss / accuracy, then reset counters */
-report()
+static void report(void)
 {
-    char a[4], b[4], p[4], c[4], q[4];
     int loss, pm;
 
     loss = closs();
-    printf("\n step %4d loss=%d.%04d", tstep, loss >> 12, lossfr(loss));
+    printf("\n step %4d loss=%d.%.4d", tstep, loss >> 12, lossfr(loss));
 
-    itol(a, thit);
-    itol(b, 1000);
-    lmul(p, a, b);
-    itol(c, ttot);
-    ldiv(q, p, c);
-    pm = ltoi(q);
+    pm = (int)(((long)thit * 1000L) / (long)ttot);
     if (pm >= 1000)
         printf(" acc=1.000\n");
     else
-        printf(" acc=0.%03d\n", pm);
+        printf(" acc=0.%.3d\n", pm);
 
     thit = 0;
     ttot = 0;
 }
 
 /* final test: 10 samples */
-test()
+static void test(void)
 {
     int n, i, idx, allok, ok;
 
@@ -823,8 +833,8 @@ test()
  * The task is to reverse the sequence, so the expected output is the
  * input read backwards; score the prediction against it.
  * Assumes cvt16() has already built the Q8 weight copies.
- * Returns 1 if every position is correct, else 0.                    */
-int infseq()
+ * Returns 1 if every position is correct, else 0. */
+static int infseq(void)
 {
     int i, idx, ok;
 
@@ -851,8 +861,7 @@ int infseq()
  * Digits are 0-9; any non-digit (space, newline) separates sequences.
  * A line must supply at least S digits; the first S are used.
  * Returns the count processed, or ERROR if the file cannot be opened. */
-int runfil(fname)
-char *fname;
+static int runfil(char *fname)
 {
     int ch, i, n;
     FILE *fp;
@@ -864,7 +873,7 @@ char *fname;
     n = 0;
     i = 0;
     fhits = 0;
-    while ((ch = fgetc(fp)) != EOF && ch != 26) {
+    while ((ch = getc(fp)) != EOF && ch != 26) {
         if (ch >= '0' && ch <= '9') {
             if (i < S)
                 tokens[i] = ch - '0';
@@ -889,126 +898,89 @@ char *fname;
 }
 
 /* ============================================================ */
-/* Lookup-table initialisers (no aggregate init in BDS C)       */
+/* Weight persistence (POSIX byte I/O)                          */
 /* ============================================================ */
 
-initex()
+/* save the six Q16 weight arrays to WFILE; 0 ok, ERROR on fail.
+ * dcc stores `long` little-endian, so the file is little-endian. */
+static int savew(void)
 {
-    exptbl[0]=256; exptbl[1]=248; exptbl[2]=240; exptbl[3]=233; exptbl[4]=226; exptbl[5]=219; exptbl[6]=212; exptbl[7]=206; exptbl[8]=199; exptbl[9]=193;
-    exptbl[10]=187; exptbl[11]=182; exptbl[12]=176; exptbl[13]=171; exptbl[14]=165; exptbl[15]=160; exptbl[16]=155; exptbl[17]=150; exptbl[18]=146; exptbl[19]=141;
-    exptbl[20]=137; exptbl[21]=133; exptbl[22]=129; exptbl[23]=125; exptbl[24]=121; exptbl[25]=117; exptbl[26]=114; exptbl[27]=110; exptbl[28]=107; exptbl[29]=103;
-    exptbl[30]=100; exptbl[31]=97; exptbl[32]=94; exptbl[33]=91; exptbl[34]=88; exptbl[35]=86; exptbl[36]=83; exptbl[37]=81; exptbl[38]=78; exptbl[39]=76;
-    exptbl[40]=73; exptbl[41]=71; exptbl[42]=69; exptbl[43]=67; exptbl[44]=65; exptbl[45]=63; exptbl[46]=61; exptbl[47]=59; exptbl[48]=57; exptbl[49]=55;
-    exptbl[50]=54; exptbl[51]=52; exptbl[52]=50; exptbl[53]=49; exptbl[54]=47; exptbl[55]=46; exptbl[56]=44; exptbl[57]=43; exptbl[58]=42; exptbl[59]=41;
-    exptbl[60]=39; exptbl[61]=38; exptbl[62]=37; exptbl[63]=36; exptbl[64]=35; exptbl[65]=34; exptbl[66]=33; exptbl[67]=32; exptbl[68]=31; exptbl[69]=30;
-    exptbl[70]=29; exptbl[71]=28; exptbl[72]=27; exptbl[73]=26; exptbl[74]=25; exptbl[75]=25; exptbl[76]=24; exptbl[77]=23; exptbl[78]=22; exptbl[79]=22;
-    exptbl[80]=21; exptbl[81]=20; exptbl[82]=20; exptbl[83]=19; exptbl[84]=19; exptbl[85]=18; exptbl[86]=17; exptbl[87]=17; exptbl[88]=16; exptbl[89]=16;
-    exptbl[90]=15; exptbl[91]=15; exptbl[92]=14; exptbl[93]=14; exptbl[94]=14; exptbl[95]=13; exptbl[96]=13; exptbl[97]=12; exptbl[98]=12; exptbl[99]=12;
-    exptbl[100]=11; exptbl[101]=11; exptbl[102]=11; exptbl[103]=10; exptbl[104]=10; exptbl[105]=10; exptbl[106]=9; exptbl[107]=9; exptbl[108]=9; exptbl[109]=8;
-    exptbl[110]=8; exptbl[111]=8; exptbl[112]=8; exptbl[113]=7; exptbl[114]=7; exptbl[115]=7; exptbl[116]=7; exptbl[117]=7; exptbl[118]=6; exptbl[119]=6;
-    exptbl[120]=6; exptbl[121]=6; exptbl[122]=6; exptbl[123]=5; exptbl[124]=5; exptbl[125]=5; exptbl[126]=5; exptbl[127]=5; exptbl[128]=5; exptbl[129]=5;
-    exptbl[130]=4; exptbl[131]=4; exptbl[132]=4; exptbl[133]=4; exptbl[134]=4; exptbl[135]=4; exptbl[136]=4; exptbl[137]=4; exptbl[138]=3; exptbl[139]=3;
-    exptbl[140]=3; exptbl[141]=3; exptbl[142]=3; exptbl[143]=3; exptbl[144]=3; exptbl[145]=3; exptbl[146]=3; exptbl[147]=3; exptbl[148]=3; exptbl[149]=2;
-    exptbl[150]=2; exptbl[151]=2; exptbl[152]=2; exptbl[153]=2; exptbl[154]=2; exptbl[155]=2; exptbl[156]=2; exptbl[157]=2; exptbl[158]=2; exptbl[159]=2;
-    exptbl[160]=2; exptbl[161]=2; exptbl[162]=2; exptbl[163]=2; exptbl[164]=2; exptbl[165]=1; exptbl[166]=1; exptbl[167]=1; exptbl[168]=1; exptbl[169]=1;
-    exptbl[170]=1; exptbl[171]=1; exptbl[172]=1; exptbl[173]=1; exptbl[174]=1; exptbl[175]=1; exptbl[176]=1; exptbl[177]=1; exptbl[178]=1; exptbl[179]=1;
-    exptbl[180]=1; exptbl[181]=1; exptbl[182]=1; exptbl[183]=1; exptbl[184]=1; exptbl[185]=1; exptbl[186]=1; exptbl[187]=1; exptbl[188]=1; exptbl[189]=1;
-    exptbl[190]=1; exptbl[191]=1; exptbl[192]=1; exptbl[193]=1; exptbl[194]=1; exptbl[195]=1; exptbl[196]=1; exptbl[197]=1; exptbl[198]=1; exptbl[199]=1;
-    exptbl[200]=0; exptbl[201]=0; exptbl[202]=0; exptbl[203]=0; exptbl[204]=0; exptbl[205]=0; exptbl[206]=0; exptbl[207]=0; exptbl[208]=0; exptbl[209]=0;
-    exptbl[210]=0; exptbl[211]=0; exptbl[212]=0; exptbl[213]=0; exptbl[214]=0; exptbl[215]=0; exptbl[216]=0; exptbl[217]=0; exptbl[218]=0; exptbl[219]=0;
-    exptbl[220]=0; exptbl[221]=0; exptbl[222]=0; exptbl[223]=0; exptbl[224]=0; exptbl[225]=0; exptbl[226]=0; exptbl[227]=0; exptbl[228]=0; exptbl[229]=0;
-    exptbl[230]=0; exptbl[231]=0; exptbl[232]=0; exptbl[233]=0; exptbl[234]=0; exptbl[235]=0; exptbl[236]=0; exptbl[237]=0; exptbl[238]=0; exptbl[239]=0;
-    exptbl[240]=0; exptbl[241]=0; exptbl[242]=0; exptbl[243]=0; exptbl[244]=0; exptbl[245]=0; exptbl[246]=0; exptbl[247]=0; exptbl[248]=0; exptbl[249]=0;
-    exptbl[250]=0; exptbl[251]=0; exptbl[252]=0; exptbl[253]=0; exptbl[254]=0; exptbl[255]=0;
-}
+    int fd, ok;
 
-initlg()
-{
-    logtbl[0]=22713; logtbl[1]=22713; logtbl[2]=19874; logtbl[3]=18213; logtbl[4]=17035; logtbl[5]=16121; logtbl[6]=15374; logtbl[7]=14743; logtbl[8]=14196; logtbl[9]=13713;
-    logtbl[10]=13282; logtbl[11]=12891; logtbl[12]=12535; logtbl[13]=12207; logtbl[14]=11903; logtbl[15]=11621; logtbl[16]=11357; logtbl[17]=11108; logtbl[18]=10874; logtbl[19]=10653;
-    logtbl[20]=10443; logtbl[21]=10243; logtbl[22]=10052; logtbl[23]=9870; logtbl[24]=9696; logtbl[25]=9529; logtbl[26]=9368; logtbl[27]=9213; logtbl[28]=9064; logtbl[29]=8921;
-    logtbl[30]=8782; logtbl[31]=8647; logtbl[32]=8517; logtbl[33]=8391; logtbl[34]=8269; logtbl[35]=8150; logtbl[36]=8035; logtbl[37]=7923; logtbl[38]=7813; logtbl[39]=7707;
-    logtbl[40]=7603; logtbl[41]=7502; logtbl[42]=7404; logtbl[43]=7307; logtbl[44]=7213; logtbl[45]=7121; logtbl[46]=7031; logtbl[47]=6943; logtbl[48]=6857; logtbl[49]=6772;
-    logtbl[50]=6689; logtbl[51]=6608; logtbl[52]=6529; logtbl[53]=6451; logtbl[54]=6374; logtbl[55]=6299; logtbl[56]=6225; logtbl[57]=6153; logtbl[58]=6081; logtbl[59]=6011;
-    logtbl[60]=5943; logtbl[61]=5875; logtbl[62]=5808; logtbl[63]=5743; logtbl[64]=5678; logtbl[65]=5615; logtbl[66]=5552; logtbl[67]=5491; logtbl[68]=5430; logtbl[69]=5370;
-    logtbl[70]=5311; logtbl[71]=5253; logtbl[72]=5196; logtbl[73]=5139; logtbl[74]=5084; logtbl[75]=5029; logtbl[76]=4974; logtbl[77]=4921; logtbl[78]=4868; logtbl[79]=4816;
-    logtbl[80]=4764; logtbl[81]=4713; logtbl[82]=4663; logtbl[83]=4613; logtbl[84]=4564; logtbl[85]=4516; logtbl[86]=4468; logtbl[87]=4421; logtbl[88]=4374; logtbl[89]=4328;
-    logtbl[90]=4282; logtbl[91]=4237; logtbl[92]=4192; logtbl[93]=4148; logtbl[94]=4104; logtbl[95]=4060; logtbl[96]=4017; logtbl[97]=3975; logtbl[98]=3933; logtbl[99]=3891;
-    logtbl[100]=3850; logtbl[101]=3810; logtbl[102]=3769; logtbl[103]=3729; logtbl[104]=3690; logtbl[105]=3650; logtbl[106]=3612; logtbl[107]=3573; logtbl[108]=3535; logtbl[109]=3497;
-    logtbl[110]=3460; logtbl[111]=3423; logtbl[112]=3386; logtbl[113]=3350; logtbl[114]=3314; logtbl[115]=3278; logtbl[116]=3242; logtbl[117]=3207; logtbl[118]=3172; logtbl[119]=3138;
-    logtbl[120]=3103; logtbl[121]=3069; logtbl[122]=3036; logtbl[123]=3002; logtbl[124]=2969; logtbl[125]=2936; logtbl[126]=2904; logtbl[127]=2871; logtbl[128]=2839; logtbl[129]=2807;
-    logtbl[130]=2776; logtbl[131]=2744; logtbl[132]=2713; logtbl[133]=2682; logtbl[134]=2651; logtbl[135]=2621; logtbl[136]=2591; logtbl[137]=2561; logtbl[138]=2531; logtbl[139]=2501;
-    logtbl[140]=2472; logtbl[141]=2443; logtbl[142]=2414; logtbl[143]=2385; logtbl[144]=2357; logtbl[145]=2328; logtbl[146]=2300; logtbl[147]=2272; logtbl[148]=2244; logtbl[149]=2217;
-    logtbl[150]=2189; logtbl[151]=2162; logtbl[152]=2135; logtbl[153]=2108; logtbl[154]=2082; logtbl[155]=2055; logtbl[156]=2029; logtbl[157]=2003; logtbl[158]=1977; logtbl[159]=1951;
-    logtbl[160]=1925; logtbl[161]=1900; logtbl[162]=1874; logtbl[163]=1849; logtbl[164]=1824; logtbl[165]=1799; logtbl[166]=1774; logtbl[167]=1750; logtbl[168]=1725; logtbl[169]=1701;
-    logtbl[170]=1677; logtbl[171]=1653; logtbl[172]=1629; logtbl[173]=1605; logtbl[174]=1582; logtbl[175]=1558; logtbl[176]=1535; logtbl[177]=1512; logtbl[178]=1488; logtbl[179]=1466;
-    logtbl[180]=1443; logtbl[181]=1420; logtbl[182]=1397; logtbl[183]=1375; logtbl[184]=1353; logtbl[185]=1330; logtbl[186]=1308; logtbl[187]=1286; logtbl[188]=1265; logtbl[189]=1243;
-    logtbl[190]=1221; logtbl[191]=1200; logtbl[192]=1178; logtbl[193]=1157; logtbl[194]=1136; logtbl[195]=1115; logtbl[196]=1094; logtbl[197]=1073; logtbl[198]=1052; logtbl[199]=1032;
-    logtbl[200]=1011; logtbl[201]=991; logtbl[202]=970; logtbl[203]=950; logtbl[204]=930; logtbl[205]=910; logtbl[206]=890; logtbl[207]=870; logtbl[208]=850; logtbl[209]=831;
-    logtbl[210]=811; logtbl[211]=792; logtbl[212]=772; logtbl[213]=753; logtbl[214]=734; logtbl[215]=715; logtbl[216]=696; logtbl[217]=677; logtbl[218]=658; logtbl[219]=639;
-    logtbl[220]=621; logtbl[221]=602; logtbl[222]=584; logtbl[223]=565; logtbl[224]=547; logtbl[225]=529; logtbl[226]=511; logtbl[227]=492; logtbl[228]=474; logtbl[229]=457;
-    logtbl[230]=439; logtbl[231]=421; logtbl[232]=403; logtbl[233]=386; logtbl[234]=368; logtbl[235]=351; logtbl[236]=333; logtbl[237]=316; logtbl[238]=299; logtbl[239]=281;
-    logtbl[240]=264; logtbl[241]=247; logtbl[242]=230; logtbl[243]=213; logtbl[244]=197; logtbl[245]=180; logtbl[246]=163; logtbl[247]=147; logtbl[248]=130; logtbl[249]=114;
-    logtbl[250]=97; logtbl[251]=81; logtbl[252]=65; logtbl[253]=48; logtbl[254]=32; logtbl[255]=16; logtbl[256]=0;
-}
-
-/* ============================================================ */
-/* Weight persistence (raw CP/M sector I/O)                     */
-/* ============================================================ */
-
-/* save the six Q16 weight arrays to WFILE; 0 ok, ERROR on fail */
-int savew()
-{
-    int fd;
-
-    fd = creat(WFILE);
-    if (fd == ERROR)
+    fd = open(WFILE, O_WRONLY | O_CREAT | O_TRUNC, 0);
+    if (fd < 0)
         return ERROR;
+    ok = write(fd, wtke, sizeof(wtke)) == (int)sizeof(wtke)
+      && write(fd, wpse, sizeof(wpse)) == (int)sizeof(wpse)
+      && write(fd, wwq,  sizeof(wwq))  == (int)sizeof(wwq)
+      && write(fd, wwk,  sizeof(wwk))  == (int)sizeof(wwk)
+      && write(fd, wwv,  sizeof(wwv))  == (int)sizeof(wwv)
+      && write(fd, wwot, sizeof(wwot)) == (int)sizeof(wwot);
     close(fd);
-    fd = open(WFILE, 2);
-    if (fd == ERROR)
-        return ERROR;
-    if (write(fd, wtke, STKE) != STKE) { close(fd); return ERROR; }
-    if (write(fd, wpse, SPSE) != SPSE) { close(fd); return ERROR; }
-    if (write(fd, wwq, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (write(fd, wwk, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (write(fd, wwv, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (write(fd, wwot, SWOT) != SWOT) { close(fd); return ERROR; }
-    close(fd);
-    return 0;
+    return ok ? 0 : ERROR;
 }
 
 /* load the six Q16 weight arrays from WFILE; 0 ok, ERROR on fail */
-int loadw()
+static int loadw(void)
 {
-    int fd;
+    int fd, ok;
 
-    fd = open(WFILE, 0);
-    if (fd == ERROR)
+    fd = open(WFILE, O_RDONLY, 0);
+    if (fd < 0)
         return ERROR;
-    if (read(fd, wtke, STKE) != STKE) { close(fd); return ERROR; }
-    if (read(fd, wpse, SPSE) != SPSE) { close(fd); return ERROR; }
-    if (read(fd, wwq, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (read(fd, wwk, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (read(fd, wwv, SWQ) != SWQ) { close(fd); return ERROR; }
-    if (read(fd, wwot, SWOT) != SWOT) { close(fd); return ERROR; }
+    ok = read(fd, wtke, sizeof(wtke)) == (int)sizeof(wtke)
+      && read(fd, wpse, sizeof(wpse)) == (int)sizeof(wpse)
+      && read(fd, wwq,  sizeof(wwq))  == (int)sizeof(wwq)
+      && read(fd, wwk,  sizeof(wwk))  == (int)sizeof(wwk)
+      && read(fd, wwv,  sizeof(wwv))  == (int)sizeof(wwv)
+      && read(fd, wwot, sizeof(wwot)) == (int)sizeof(wwot);
     close(fd);
-    return 0;
+    return ok ? 0 : ERROR;
+}
+
+/* ============================================================ */
+/* Host stopwatch via Z80 port I/O (see port_drivers/time_io.c)  */
+/*                                                               */
+/* inp()/outp() are a dcc extension (not C89) for direct 8-bit   */
+/* port I/O: inp() runs IN A,(port) and outp() runs OUT (port),A */
+/* (only the low 8 bits of port are significant).  We drive the  */
+/* same ports ATTNZ80.MAC uses:                                  */
+/*                                                               */
+/*   OUT 37,0 -> start/reset host stopwatch 0                    */
+/*   OUT 37,1 -> latch elapsed seconds (4-byte big-endian long)  */
+/*   IN  200  -> read those 4 bytes back, MSB first              */
+/*                                                               */
+/* The ports are no-ops under a bare CP/M emulator that lacks    */
+/* them; the elapsed time is only meaningful on this project's   */
+/* Altair emulator / ESP32 firmware.                             */
+/* ============================================================ */
+
+extern int  inp(unsigned port);
+extern void outp(unsigned port, unsigned val);
+
+#define SWPORT 37               /* host stopwatch 0         */
+#define RDPORT 200              /* request-buffer read-back */
+
+/* read the latched 4-byte big-endian elapsed seconds; low 16 bits */
+static unsigned elapsed(void)
+{
+    int hi, lo;
+
+    inp(RDPORT);                /* byte 0 (MSB) - ignore */
+    inp(RDPORT);                /* byte 1       - ignore */
+    hi = inp(RDPORT);           /* byte 2                */
+    lo = inp(RDPORT);           /* byte 3 (LSB)          */
+    return (unsigned)((hi << 8) | lo);
 }
 
 /* ============================================================ */
 /* Entry point                                                  */
 /* ============================================================ */
 
-main(argc, argv)
-int argc;
-char *argv[];
+int main(int argc, char *argv[])
 {
     int step, train, ns, vs;
     char *fname;
-
-    initex();
-    initlg();
 
     train = 0;
     fname = IFILE;
@@ -1017,12 +989,12 @@ char *argv[];
             train = 1;
         else if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-H") == 0 ||
                  strcmp(argv[1], "/?") == 0) {
-            printf("attn - tiny transformer that reverses 8 digits\n\n");
+            printf("attnc89 - tiny transformer that reverses 8 digits\n\n");
             printf("usage:\n");
-            printf("  attn          infer from %s (one 8-digit line each)\n", IFILE);
-            printf("  attn <file>   infer from <file> instead\n");
-            printf("  attn -t       train, save weights to %s, then test\n", WFILE);
-            printf("  attn -h       this help\n");
+            printf("  attnc89          infer from %s (one 8-digit line each)\n", IFILE);
+            printf("  attnc89 <file>   infer from <file> instead\n");
+            printf("  attnc89 -t       train, save weights to %s, then test\n", WFILE);
+            printf("  attnc89 -h       this help\n");
             return 0;
         } else
             fname = argv[1];        /* explicit input file */
@@ -1071,11 +1043,12 @@ char *argv[];
     /* inference */
     printf("loading weights from %s ...\n", WFILE);
     if (loadw() != 0) {
-        printf("no weights file found - run 'attn -t' first\n");
+        printf("no weights file found - run 'attnc89 -t' first\n");
         return 1;
     }
     cvt16();                        /* build Q8 weight copies once */
 
+    outp(SWPORT, 0);                /* start host stopwatch 0 */
     ns = runfil(fname);
     if (ns == ERROR) {
         if (argc > 1 && fname != IFILE) {
@@ -1088,7 +1061,9 @@ char *argv[];
         test();
         return 0;
     }
+    outp(SWPORT, 1);                /* latch elapsed seconds */
 
     printf("\naccuracy  %2d/%d\n", fhits, ns);
+    printf("run time  %u s\n", elapsed());
     return 0;
 }

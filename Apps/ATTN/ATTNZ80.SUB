@@ -1,0 +1,23 @@
+; Apps/ATTN/ATTNZ80.SUB - build the Z80 (Microsoft M80/L80) inference port
+;
+; M80.COM and L80.COM live on the D: drive in the altair-cpm-build MCP
+; environment.  The submit runs from B:, so the source is fetched there and
+; M80/L80 read/write B: by default.  The finished .COM is copied to the blank
+; C: scratch drive (A: is full); stage ATTN.WTS / ATTN.IN onto C: separately
+; to run an accuracy check.
+;
+; Run with the MCP server:
+;   run_submit submit=attnz80 fetch=attn/attnz80.sub
+ft -g file://attn/attnz80.mac
+
+d:m80 attnz80=attnz80
+d:l80 attnz80,attnz80/n/e
+
+era c:attnz80.com
+a:pip c:attnz80.com=attnz80.com
+
+era attnz80.mac
+era attnz80.rel
+era attnz80.com
+
+mcpdone attnz80

@@ -1,0 +1,1524 @@
+; ATTNZ80.MAC - inference-only Z80 (Microsoft M80/L80) port of ATTN.C
+;
+; "Paper Tape is All You Need" - a 1-layer, 1-head transformer that
+; reverses an 8-digit sequence.  This is a hand-written Zilog Z80
+; assembly port of Apps/ATTN/ATTNINF.ASM (which was itself an Intel 8080
+; port of the BDS C ATTN.C, the PDP-11 attn.s, and Damien Boureille's
+; NN11 / ATTN-11 library).
+;
+; The Altair now runs the Z80 instruction set, so this version is rewritten
+; in Microsoft MACRO-80 (.Z80) syntax and leans hard on Z80-only features
+; that the 8080 lacked:
+;
+;   * 16-bit ADD HL,rr / ADC HL,rr / SBC HL,rr  - vector add, residual add,
+;     32-bit accumulate, saturating add overflow test, divide compare.
+;   * LDIR                                       - block copies / FCB fills.
+;   * DJNZ                                        - counted helper loops.
+;   * SLA / SRA / SRL / RL / RR (reg and (HL))    - the shift/rotate helpers
+;     ASR2, SHR3, SHL32 and the open-coded 16x16 multiply / 32/16 divide.
+;   * BIT b,r / SET b,(HL)                        - sign tests, quotient bit.
+;   * LD rr,(nn) / LD (nn),rr                     - pointer save/restore that
+;     no longer has to detour through HL + XCHG.
+;
+; Only inference is implemented: it loads the trained Q16 weights from
+; ATTN.WTS on the current drive, reads 8-digit lines from an input file
+; (default ATTN.IN), runs the forward pass, prints the reversed prediction
+; for each line, and reports accuracy.
+;
+; The weights are produced by ATTNC89.C, the dcc C89 trainer, which stores
+; them as native little-endian 32-bit `long`.  This port therefore reads the
+; Q16 weights little-endian; the earlier big-endian BDS C LONG package layout
+; (used by ATTNINF.ASM) is no longer the on-disk format.
+;
+; Numerics (faithful to ATTN.C / ATTNINF.ASM):
+;   Q8  activations          int16, value = real * 256
+;   Q16 weights on disk      32-bit signed, little-endian (dcc native long)
+;
+; Timing (see port_drivers/time_io.c):
+;   OUT 37,0 -> start/reset host stopwatch 0
+;   OUT 37,1 -> latch elapsed seconds as a 4-byte big-endian unsigned long
+;   IN  200  -> read those 4 bytes back (MSB first)
+;
+; Build (M80 + L80 live on D: in the altair-cpm-build MCP environment):
+;   d:m80 attnz80=attnz80      ->  ATTNZ80.REL
+;   d:l80 attnz80,attnz80/n/e  ->  ATTNZ80.COM
+;
+; Usage:
+;   attnz80           infer from ATTN.IN
+;   attnz80 <file>    infer from <file> instead
+;   attnz80 -h        help
+
+        .Z80
+
+DM      EQU     16              ; d_model
+S       EQU     8               ; sequence length
+V       EQU     10              ; vocab (digits 0-9)
+
+BDOSE   EQU     5               ; BDOS entry point
+FCONO   EQU     2               ; console output (char in E)
+FPRSTR  EQU     9               ; print '$' string (DE)
+FOPEN   EQU     15              ; open file (DE = FCB)
+FRDSEQ  EQU     20              ; read sequential
+FSDMA   EQU     26              ; set DMA address
+
+SWPORT  EQU     37              ; host stopwatch 0 (see time_io.c)
+RDPORT  EQU     200             ; request/string read-back port
+
+CPMEOF  EQU     1AH             ; ^Z text terminator
+
+        ASEG
+        ORG     0100H
+
+START:  LD      HL,0            ; save CCP stack
+        ADD     HL,SP
+        LD      (OLDSP),HL
+        LD      SP,STACK        ; our stack
+
+; --- parse the command tail for an optional filename or -H ----------------
+        LD      A,(0080H)       ; B = tail length
+        LD      B,A
+        LD      HL,0081H        ; HL -> first tail char
+TSKIP:  LD      A,B
+        OR      A
+        JP      Z,TDEF          ; nothing left -> default file
+        LD      A,(HL)
+        CP      ' '
+        JR      NZ,TGOT
+        INC     HL
+        DEC     B
+        JR      TSKIP
+TGOT:   LD      DE,FNAME        ; copy token -> FNAME
+TCPY:   LD      A,B
+        OR      A
+        JR      Z,TCEND
+        LD      A,(HL)
+        CP      ' '
+        JR      Z,TCEND
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        DEC     B
+        JR      TCPY
+TCEND:  XOR     A
+        LD      (DE),A          ; NUL terminate
+        LD      A,(FNAME)
+        OR      A
+        JP      Z,TDEF          ; empty -> default
+        CP      '-'             ; option?
+        JP      NZ,TDONE
+        LD      A,(FNAME+1)
+        CP      'H'             ; CCP upper-cases the tail
+        JP      Z,DOHELP
+        JP      TDONE           ; '-' something else: treat as a name
+TDEF:   LD      HL,DEFIN        ; FNAME = "ATTN.IN"
+        LD      DE,FNAME
+        LD      BC,8            ; 'ATTN.IN' + NUL
+        LDIR                    ; Z80 block copy
+TDONE:
+
+; --- banner ---------------------------------------------------------------
+        LD      DE,MBAN1
+        CALL    PSTR
+        LD      DE,MLOAD
+        CALL    PSTR
+
+; --- start the host stopwatch to time the whole run ----------------------
+        XOR     A
+        OUT     (SWPORT),A      ; OUT 37,0 -> start/reset stopwatch 0
+
+; --- load and convert the weights -----------------------------------------
+        CALL    LOADW
+        OR      A
+        JR      Z,WTSOK
+        LD      DE,MNOWTS
+        CALL    PSTR
+        JP      EXIT
+WTSOK:  CALL    CVT16
+
+; --- open the input file --------------------------------------------------
+        LD      HL,FNAME
+        CALL    MKFCB
+        LD      DE,FIN
+        LD      C,FOPEN
+        CALL    BDOSE
+        INC     A               ; 0FFH -> 0 on failure
+        JR      NZ,INOK
+        LD      DE,MNOIN
+        CALL    PSTR
+        LD      HL,FNAME
+        CALL    PUTSTR
+        LD      DE,MCRLF
+        CALL    PSTR
+        JP      EXIT
+INOK:
+
+; --- run inference over the file ------------------------------------------
+        CALL    RUNFIL
+
+; --- report accuracy ------------------------------------------------------
+        LD      DE,MACC
+        CALL    PSTR
+        LD      HL,(FHITS)
+        CALL    PRDEC
+        LD      A,'/'
+        CALL    COUT
+        LD      HL,(NSEQ)
+        CALL    PRDEC
+        LD      DE,MCRLF
+        CALL    PSTR
+
+; --- latch and report total run time (whole seconds) ---------------------
+        LD      A,1
+        OUT     (SWPORT),A      ; OUT 37,1 -> latch elapsed seconds
+        IN      A,(RDPORT)      ; byte 0 (MSB) - ignore
+        IN      A,(RDPORT)      ; byte 1       - ignore
+        IN      A,(RDPORT)      ; byte 2
+        LD      H,A
+        IN      A,(RDPORT)      ; byte 3 (LSB)
+        LD      L,A             ; HL = elapsed seconds (low 16 bits)
+        LD      DE,MTIME
+        CALL    PSTR
+        CALL    PRDEC
+        LD      DE,MSECS
+        CALL    PSTR
+
+EXIT:   LD      DE,0080H        ; restore default DMA for the CCP
+        LD      C,FSDMA
+        CALL    BDOSE
+        LD      HL,(OLDSP)
+        LD      SP,HL
+        RET
+
+DOHELP: LD      DE,MHELP
+        CALL    PSTR
+        JP      EXIT
+
+; ==========================================================================
+; LOADW - open ATTN.WTS on the current drive and read 38 records into WBUF.
+;         Returns A = 0 on success, A = 1 on failure.
+; ==========================================================================
+LOADW:  LD      DE,FWTS
+        LD      C,FOPEN
+        CALL    BDOSE
+        INC     A               ; 0FFH -> 0 fail
+        JR      Z,LWFAIL
+        LD      HL,WBUF
+        LD      (DMAP),HL
+        LD      A,38
+        LD      (WCNT),A
+LWLP:   LD      DE,(DMAP)       ; DE = DMA address (Z80 direct load, no XCHG)
+        LD      C,FSDMA
+        CALL    BDOSE
+        LD      DE,FWTS
+        LD      C,FRDSEQ
+        CALL    BDOSE
+        OR      A               ; nonzero -> EOF/error (short file)
+        JR      NZ,LWFAIL
+        LD      HL,(DMAP)
+        LD      DE,128
+        ADD     HL,DE
+        LD      (DMAP),HL
+        LD      A,(WCNT)
+        DEC     A
+        LD      (WCNT),A
+        JR      NZ,LWLP
+        XOR     A
+        RET
+LWFAIL: LD      A,1
+        RET
+
+; ==========================================================================
+; CVT16 - convert 1216 little-endian Q16 weights in WBUF to Q8 ints in QBUF.
+;         The weights are stored little-endian (dcc native `long`, written by
+;         ATTNC89.C), which is exactly the 4-byte layout LQ8 consumes, so each
+;         weight pointer is handed straight to LQ8 with no byte swap.
+;         Each weight = lq8(value) = signed value/256 toward zero, clamp16.
+; ==========================================================================
+CVT16:  LD      HL,WBUF
+        LD      (WBUFP),HL
+        LD      HL,QBUF
+        LD      (QBUFP),HL
+        LD      HL,1216
+        LD      (CVCNT),HL
+CVLP:   LD      HL,(WBUFP)      ; HL -> 4-byte little-endian Q16 weight
+        CALL    LQ8             ; HL = q8  (LQ8 reads 4 bytes LE from (HL))
+        EX      DE,HL           ; DE = q8
+        LD      HL,(QBUFP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (QBUFP),HL
+        LD      HL,(WBUFP)      ; advance source by 4 bytes
+        INC     HL
+        INC     HL
+        INC     HL
+        INC     HL
+        LD      (WBUFP),HL
+        LD      HL,(CVCNT)
+        DEC     HL
+        LD      (CVCNT),HL
+        LD      A,H
+        OR      L
+        JP      NZ,CVLP
+        RET
+
+; ==========================================================================
+; RUNFIL - read records from the open FIN file, gather 8-digit lines,
+;          run infseq() on each, accumulate FHITS and NSEQ.
+; ==========================================================================
+RUNFIL: LD      HL,0
+        LD      (FHITS),HL
+        LD      (NSEQ),HL
+        XOR     A
+        LD      (DIGI),A
+RFREC:  LD      DE,SECBUF       ; set DMA to our record buffer
+        LD      C,FSDMA
+        CALL    BDOSE
+        LD      DE,FIN
+        LD      C,FRDSEQ
+        CALL    BDOSE
+        OR      A
+        JP      NZ,RFEOF        ; nonzero -> end of file
+        LD      HL,SECBUF
+        LD      B,128
+RFSCAN: LD      A,(HL)
+        CP      CPMEOF
+        JP      Z,RFEOF
+        CP      '0'
+        JP      C,RFNDIG
+        CP      ':'             ; '9'+1
+        JP      NC,RFNDIG
+        ; digit in A
+        SUB     '0'             ; A = digit value (0..9)
+        PUSH    HL              ; save scan ptr
+        PUSH    BC              ; save scan count
+        LD      C,A             ; C = digit value
+        LD      A,(DIGI)
+        CP      S
+        JR      NC,RFDADV       ; already have S digits: just count
+        LD      E,A             ; E = DIGI index
+        LD      D,0
+        LD      HL,TOKENS
+        ADD     HL,DE
+        ADD     HL,DE           ; HL = TOKENS + DIGI*2
+        LD      (HL),C          ; low byte = digit
+        INC     HL
+        LD      (HL),0          ; high byte = 0
+RFDADV: POP     BC
+        POP     HL
+        LD      A,(DIGI)
+        INC     A
+        LD      (DIGI),A
+        JP      RFNEXT
+RFNDIG: CP      0AH             ; newline (LF)?
+        JP      NZ,RFNEXT
+        ; end of line
+        LD      A,(DIGI)
+        CP      S
+        JR      C,RFRST         ; fewer than S digits -> skip
+        PUSH    HL
+        PUSH    BC
+        CALL    INFSEQ          ; A = ok (0/1)
+        LD      E,A
+        LD      D,0
+        LD      HL,(FHITS)
+        ADD     HL,DE
+        LD      (FHITS),HL
+        LD      HL,(NSEQ)
+        INC     HL
+        LD      (NSEQ),HL
+        POP     BC
+        POP     HL
+RFRST:  XOR     A
+        LD      (DIGI),A
+RFNEXT: INC     HL
+        DEC     B
+        JP      NZ,RFSCAN
+        JP      RFREC
+RFEOF:  ; final line with no trailing newline
+        LD      A,(DIGI)
+        CP      S
+        JR      C,RFDONE
+        CALL    INFSEQ
+        LD      E,A
+        LD      D,0
+        LD      HL,(FHITS)
+        ADD     HL,DE
+        LD      (FHITS),HL
+        LD      HL,(NSEQ)
+        INC     HL
+        LD      (NSEQ),HL
+RFDONE: RET
+
+; ==========================================================================
+; INFSEQ - forward pass on TOKENS, print "in -> out ok/fail",
+;          return A = 1 if every position matches the reversed input.
+; ==========================================================================
+INFSEQ: CALL    FORWRD
+        LD      A,' '
+        CALL    COUT
+        ; print tokens
+        LD      HL,TOKENS
+        LD      (ISP),HL
+        LD      A,S
+        LD      (ISI),A
+ISPT:   LD      HL,(ISP)
+        LD      A,(HL)
+        INC     HL
+        INC     HL
+        LD      (ISP),HL
+        CALL    PRDIG
+        LD      A,(ISI)
+        DEC     A
+        LD      (ISI),A
+        JP      NZ,ISPT
+        LD      DE,MARROW
+        CALL    PSTR
+        LD      A,1
+        LD      (OKF),A
+        ; for i = 0..S-1: argmax logits[i*V], compare to tokens[S-1-i]
+        LD      HL,LOGB
+        LD      (ISP),HL        ; reuse ISP as logits row pointer
+        XOR     A
+        LD      (ISI),A         ; ISI = i
+ISPRD:  LD      HL,(ISP)
+        LD      (VPTR),HL
+        LD      A,V
+        LD      (VN),A
+        CALL    VMAX            ; IDX = argmax
+        LD      A,(IDX)
+        CALL    PRDIG
+        ; tokens[S-1-i]
+        LD      A,(ISI)
+        LD      B,A
+        LD      A,S-1
+        SUB     B               ; A = S-1-i
+        LD      L,A
+        LD      H,0
+        ADD     HL,HL           ; *2
+        LD      DE,TOKENS
+        ADD     HL,DE
+        LD      A,(HL)          ; tokens[S-1-i] low byte
+        LD      B,A
+        LD      A,(IDX)
+        CP      B
+        JR      Z,ISPOK
+        XOR     A
+        LD      (OKF),A         ; mismatch
+ISPOK:  LD      HL,(ISP)        ; advance logits row by V ints
+        LD      DE,V+V
+        ADD     HL,DE
+        LD      (ISP),HL
+        LD      A,(ISI)
+        INC     A
+        LD      (ISI),A
+        CP      S
+        JP      NZ,ISPRD
+        LD      A,(OKF)
+        OR      A
+        JR      Z,ISFAIL
+        LD      DE,MOK
+        CALL    PSTR
+        JR      ISRET
+ISFAIL: LD      DE,MFAIL
+        CALL    PSTR
+ISRET:  LD      A,(OKF)
+        RET
+
+; ==========================================================================
+; FORWRD - embed -> attn -> proj
+; ==========================================================================
+FORWRD: CALL    EMBED
+        CALL    ATTNF
+        CALL    PROJ
+        RET
+
+; ==========================================================================
+; EMBED - xx[i*D+j] = qtke[tokens[i]*D + j] + qpse[i*D + j]
+; ==========================================================================
+EMBED:  LD      HL,XX
+        LD      (EXXP),HL
+        LD      HL,QPSEB
+        LD      (EPSEP),HL
+        LD      HL,TOKENS
+        LD      (ETOKP),HL
+        LD      A,S
+        LD      (EMBI),A
+EMROW:  LD      HL,(ETOKP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (ETOKP),HL      ; DE = tok
+        EX      DE,HL           ; HL = tok
+        ADD     HL,HL           ; tok*2
+        ADD     HL,HL           ; *4
+        ADD     HL,HL           ; *8
+        ADD     HL,HL           ; *16
+        ADD     HL,HL           ; *32  (= tok*D*2)
+        LD      DE,QTKEB
+        ADD     HL,DE
+        LD      (ETKEP),HL
+        LD      A,DM
+        LD      (EMBJ),A
+EMCOL:  LD      HL,(ETKEP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (ETKEP),HL      ; DE = tke, ETKEP advanced
+        PUSH    DE              ; save tke
+        LD      HL,(EPSEP)      ; HL -> pse element
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (EPSEP),HL      ; DE = pse, EPSEP advanced
+        POP     HL              ; HL = tke
+        ADD     HL,DE           ; HL = tke + pse
+        EX      DE,HL           ; DE = sum
+        LD      HL,(EXXP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (EXXP),HL
+        LD      A,(EMBJ)
+        DEC     A
+        LD      (EMBJ),A
+        JP      NZ,EMCOL
+        LD      A,(EMBI)
+        DEC     A
+        LD      (EMBI),A
+        JP      NZ,EMROW
+        RET
+
+; ==========================================================================
+; ATTNF - self attention forward pass
+; ==========================================================================
+ATTNF:
+; Step 1-3: Q = X.Wq, K = X.Wk, V = X.Wv  (per row vtmul)
+        LD      HL,XX
+        LD      (AXIP),HL
+        LD      HL,WQB
+        LD      (AQP),HL
+        LD      HL,WKB
+        LD      (AKP),HL
+        LD      HL,WVB
+        LD      (AVP),HL
+        LD      A,S
+        LD      (AAI),A
+ATQKV:  LD      HL,QWQB
+        LD      (VTMAT),HL
+        LD      HL,(AXIP)
+        LD      (VTVIN),HL
+        LD      HL,(AQP)
+        LD      (VTVOUT),HL
+        LD      A,DM
+        LD      (VTROWS),A
+        LD      (VTCOLS),A
+        CALL    VTMUL
+        LD      HL,QWKB
+        LD      (VTMAT),HL
+        LD      HL,(AXIP)
+        LD      (VTVIN),HL
+        LD      HL,(AKP)
+        LD      (VTVOUT),HL
+        LD      A,DM
+        LD      (VTROWS),A
+        LD      (VTCOLS),A
+        CALL    VTMUL
+        LD      HL,QWVB
+        LD      (VTMAT),HL
+        LD      HL,(AXIP)
+        LD      (VTVIN),HL
+        LD      HL,(AVP)
+        LD      (VTVOUT),HL
+        LD      A,DM
+        LD      (VTROWS),A
+        LD      (VTCOLS),A
+        CALL    VTMUL
+        ; advance row pointers by D*2 = 32
+        LD      HL,(AXIP)
+        LD      DE,32
+        ADD     HL,DE
+        LD      (AXIP),HL
+        LD      HL,(AQP)
+        LD      DE,32
+        ADD     HL,DE
+        LD      (AQP),HL
+        LD      HL,(AKP)
+        LD      DE,32
+        ADD     HL,DE
+        LD      (AKP),HL
+        LD      HL,(AVP)
+        LD      DE,32
+        ADD     HL,DE
+        LD      (AVP),HL
+        LD      A,(AAI)
+        DEC     A
+        LD      (AAI),A
+        JP      NZ,ATQKV
+; Step 4: scores[i][j] = asr(vdot(Q[i],K[j],D),2)
+        LD      HL,WQB
+        LD      (AQIP),HL       ; Q[i]
+        LD      HL,WAB
+        LD      (AAP),HL        ; scores write ptr
+        LD      A,S
+        LD      (AAI),A
+ATSCI:  LD      HL,WKB
+        LD      (AKJP),HL       ; K[j]
+        LD      A,S
+        LD      (AAJ),A
+ATSCJ:  LD      HL,(AQIP)
+        LD      (XPTR),HL
+        LD      HL,(AKJP)
+        LD      (YPTR),HL
+        LD      A,DM
+        LD      (VDN),A
+        CALL    VDOT            ; HL = dot (Q8, clamped)
+        CALL    ASR2            ; HL = dot >> 2 (floor)
+        EX      DE,HL           ; DE = score
+        LD      HL,(AAP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (AAP),HL
+        LD      HL,(AKJP)
+        LD      DE,32           ; next K row (D*2)
+        ADD     HL,DE
+        LD      (AKJP),HL
+        LD      A,(AAJ)
+        DEC     A
+        LD      (AAJ),A
+        JP      NZ,ATSCJ
+        LD      HL,(AQIP)
+        LD      DE,32           ; next Q row
+        ADD     HL,DE
+        LD      (AQIP),HL
+        LD      A,(AAI)
+        DEC     A
+        LD      (AAI),A
+        JP      NZ,ATSCI
+; Step 5: softmax each score row (S entries)
+        LD      HL,WAB
+        LD      (AAP),HL
+        LD      A,S
+        LD      (AAI),A
+ATSFT:  LD      HL,(AAP)
+        LD      (SFVEC),HL
+        LD      A,S
+        LD      (SFN),A
+        CALL    SFTMX
+        LD      HL,(AAP)
+        LD      DE,S+S          ; next row (S ints = 16 bytes)
+        ADD     HL,DE
+        LD      (AAP),HL
+        LD      A,(AAI)
+        DEC     A
+        LD      (AAI),A
+        JP      NZ,ATSFT
+; Step 6: Y[i] = V^T . A[i]
+        LD      HL,WAB
+        LD      (AAP),HL        ; A[i]
+        LD      HL,YY
+        LD      (AQP),HL        ; Y[i]
+        LD      A,S
+        LD      (AAI),A
+ATYI:   LD      HL,WVB
+        LD      (VTMAT),HL
+        LD      HL,(AAP)
+        LD      (VTVIN),HL
+        LD      HL,(AQP)
+        LD      (VTVOUT),HL
+        LD      A,S
+        LD      (VTROWS),A
+        LD      A,DM
+        LD      (VTCOLS),A
+        CALL    VTMUL
+        LD      HL,(AAP)
+        LD      DE,S+S
+        ADD     HL,DE
+        LD      (AAP),HL
+        LD      HL,(AQP)
+        LD      DE,32
+        ADD     HL,DE
+        LD      (AQP),HL
+        LD      A,(AAI)
+        DEC     A
+        LD      (AAI),A
+        JP      NZ,ATYI
+; Step 7: residual Y += X  (S*D ints)
+        LD      HL,YY
+        LD      (AQP),HL
+        LD      HL,XX
+        LD      (AXIP),HL
+        LD      HL,S*DM
+        LD      (ARCNT),HL
+ATRES:  LD      HL,(AQP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)          ; DE = yy
+        LD      HL,(AXIP)
+        LD      C,(HL)
+        INC     HL
+        LD      B,(HL)
+        INC     HL
+        LD      (AXIP),HL       ; BC = xx
+        EX      DE,HL           ; HL = yy
+        ADD     HL,BC           ; HL = yy + xx
+        EX      DE,HL           ; DE = yy+xx
+        LD      HL,(AQP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (AQP),HL
+        LD      HL,(ARCNT)
+        DEC     HL
+        LD      (ARCNT),HL
+        LD      A,H
+        OR      L
+        JP      NZ,ATRES
+        RET
+
+; ==========================================================================
+; PROJ - logits[i] = Wout^T . Y[i]
+; ==========================================================================
+PROJ:   LD      HL,YY
+        LD      (AQP),HL        ; Y[i]
+        LD      HL,LOGB
+        LD      (AAP),HL        ; logits row
+        LD      A,S
+        LD      (AAI),A
+PRJI:   LD      HL,QWOTB
+        LD      (VTMAT),HL
+        LD      HL,(AQP)
+        LD      (VTVIN),HL
+        LD      HL,(AAP)
+        LD      (VTVOUT),HL
+        LD      A,DM
+        LD      (VTROWS),A
+        LD      A,V
+        LD      (VTCOLS),A
+        CALL    VTMUL
+        LD      HL,(AQP)
+        LD      DE,32           ; next Y row (D*2)
+        ADD     HL,DE
+        LD      (AQP),HL
+        LD      HL,(AAP)
+        LD      DE,V+V          ; next logits row (V*2)
+        ADD     HL,DE
+        LD      (AAP),HL
+        LD      A,(AAI)
+        DEC     A
+        LD      (AAI),A
+        JP      NZ,PRJI
+        RET
+
+; ==========================================================================
+; VTMUL - vout[j] = sum_i (mat[i][j] * vin[i]) >> 8, saturating.
+;         Inputs: VTMAT, VTVIN, VTVOUT (ptrs), VTROWS, VTCOLS (counts).
+; ==========================================================================
+VTMUL:  LD      HL,(VTVOUT)     ; clear vout (cols ints)
+        EX      DE,HL
+        LD      A,(VTCOLS)
+        LD      B,A
+        XOR     A
+VTCLR:  LD      (DE),A
+        INC     DE
+        LD      (DE),A
+        INC     DE
+        DJNZ    VTCLR
+        LD      HL,(VTMAT)
+        LD      (MATP),HL
+        LD      HL,(VTVIN)
+        LD      (VINP),HL
+        LD      A,(VTROWS)
+        LD      (VTRI),A
+VTROW:  LD      HL,(VINP)       ; sc = vin[i]
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (VINP),HL
+        LD      (VSC),DE        ; VSC = vin[i] (Z80 direct store)
+        LD      HL,(VTVOUT)
+        LD      (VOUTP),HL
+        LD      A,(VTCOLS)
+        LD      (VTCJ),A
+VTCOL:  LD      HL,(MATP)       ; mat element
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (MATP),HL
+        LD      (MULA),DE
+        LD      HL,(VSC)
+        LD      (MULB),HL
+        CALL    PRODAB          ; PROD = mat * sc
+        LD      HL,PROD
+        CALL    LQ8             ; HL = (mat*sc)>>8 clamp
+        EX      DE,HL           ; DE = t
+        LD      HL,(VOUTP)
+        CALL    ADDCL           ; vout[j] += t, saturating
+        LD      HL,(VOUTP)
+        INC     HL
+        INC     HL
+        LD      (VOUTP),HL
+        LD      A,(VTCJ)
+        DEC     A
+        LD      (VTCJ),A
+        JP      NZ,VTCOL
+        LD      A,(VTRI)
+        DEC     A
+        LD      (VTRI),A
+        JP      NZ,VTROW
+        RET
+
+; ==========================================================================
+; VDOT - HL = lq8(sum_i x[i]*y[i]).  Inputs XPTR, YPTR, VDN (count).
+;        The 32-bit accumulate uses Z80 ADD HL,DE / ADC HL,DE on ACC.
+; ==========================================================================
+VDOT:   LD      HL,0
+        LD      (ACC),HL
+        LD      (ACC+2),HL
+VDLP:   LD      HL,(XPTR)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (XPTR),HL
+        LD      (MULA),DE
+        LD      HL,(YPTR)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (YPTR),HL
+        LD      (MULB),DE
+        CALL    PRODAB
+        ; ACC += PROD  (32-bit LE), Z80 16-bit add then add-with-carry
+        LD      HL,(ACC)
+        LD      DE,(PROD)
+        ADD     HL,DE
+        LD      (ACC),HL
+        LD      HL,(ACC+2)
+        LD      DE,(PROD+2)
+        ADC     HL,DE
+        LD      (ACC+2),HL
+        LD      A,(VDN)
+        DEC     A
+        LD      (VDN),A
+        JP      NZ,VDLP
+        LD      HL,ACC
+        CALL    LQ8
+        RET
+
+; ==========================================================================
+; SFTMX - softmax in place over SFVEC (SFN entries), LUT based.
+; ==========================================================================
+SFTMX:  LD      HL,(SFVEC)      ; mx = vmax(vec,n)
+        LD      (VPTR),HL
+        LD      A,(SFN)
+        LD      (VN),A
+        CALL    VMAX            ; MXVAL = max
+        LD      HL,(SFVEC)
+        LD      (SFP),HL
+        LD      A,(SFN)
+        LD      (SFI),A
+        LD      HL,0
+        LD      (SUM),HL
+SFP1:   LD      HL,(SFP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)          ; DE = vec[i]
+        LD      HL,(MXVAL)
+        OR      A               ; clear carry
+        SBC     HL,DE           ; HL = mx - vec[i]
+        BIT     7,H
+        JR      Z,SFDOK
+        LD      HL,0            ; d < 0 -> 0
+SFDOK:  CALL    SHR3            ; idx = d >> 3
+        LD      A,H
+        OR      A
+        JR      NZ,SFCAP
+        LD      A,L
+        JR      SFIDX
+SFCAP:  LD      A,255
+SFIDX:  LD      L,A             ; A = idx (0..255)
+        LD      H,0
+        ADD     HL,HL           ; *2
+        LD      DE,EXPTBL
+        ADD     HL,DE
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)          ; DE = exptbl[idx]
+        LD      HL,(SFP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D          ; vec[i] = exptbl[idx]
+        LD      HL,(SUM)
+        ADD     HL,DE
+        LD      (SUM),HL        ; sum += value
+        LD      HL,(SFP)
+        INC     HL
+        INC     HL
+        LD      (SFP),HL
+        LD      A,(SFI)
+        DEC     A
+        LD      (SFI),A
+        JP      NZ,SFP1
+        ; pass 2: vec[i] = fxdiv(vec[i], sum)
+        LD      HL,(SFVEC)
+        LD      (SFP),HL
+        LD      A,(SFN)
+        LD      (SFI),A
+SFP2:   LD      HL,(SFP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)          ; DE = vec[i]
+        LD      HL,(SUM)        ; HL = sum
+        EX      DE,HL           ; HL = vec[i], DE = sum
+        CALL    FXDIV           ; HL = (vec[i]<<8)/sum, clamp
+        EX      DE,HL           ; DE = result
+        LD      HL,(SFP)
+        LD      (HL),E
+        INC     HL
+        LD      (HL),D
+        INC     HL
+        LD      (SFP),HL
+        LD      A,(SFI)
+        DEC     A
+        LD      (SFI),A
+        JP      NZ,SFP2
+        RET
+
+; ==========================================================================
+; VMAX - find max of VPTR[0..VN-1]; MXVAL = max value, IDX = max index.
+; ==========================================================================
+VMAX:   LD      HL,(VPTR)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (VMP),HL        ; VMP -> vec[1]
+        LD      (MXVAL),DE      ; mx = vec[0]
+        XOR     A
+        LD      (IDX),A
+        LD      A,1
+        LD      (VMI),A
+VMLP:   LD      A,(VMI)
+        LD      B,A
+        LD      A,(VN)
+        CP      B
+        JP      Z,VMDONE        ; i == n
+        LD      HL,(VMP)
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)
+        INC     HL
+        LD      (VMP),HL        ; DE = vec[i]
+        LD      HL,(MXVAL)
+        EX      DE,HL           ; HL = vec[i], DE = mx
+        CALL    SGT             ; A = 1 if vec[i] > mx
+        OR      A
+        JR      Z,VMNX
+        ; new max: reload vec[i] from VMP-2
+        LD      HL,(VMP)
+        DEC     HL
+        DEC     HL
+        LD      E,(HL)
+        INC     HL
+        LD      D,(HL)          ; DE = vec[i]
+        LD      (MXVAL),DE
+        LD      A,(VMI)
+        LD      (IDX),A
+VMNX:   LD      A,(VMI)
+        INC     A
+        LD      (VMI),A
+        JP      VMLP
+VMDONE: LD      HL,(MXVAL)
+        RET
+
+; ==========================================================================
+; SGT - A = 1 if (HL > DE) signed, else 0.  Clobbers A only.
+; ==========================================================================
+SGT:    LD      A,H
+        XOR     D
+        JP      M,SGTDIF
+        LD      A,H             ; same sign: unsigned compare
+        CP      D
+        JR      C,SGTNO
+        JR      NZ,SGTYES
+        LD      A,L
+        CP      E
+        JR      C,SGTNO
+        JR      NZ,SGTYES
+        JR      SGTNO
+SGTDIF: LD      A,H             ; signs differ: HL>DE iff HL positive
+        OR      A
+        JP      P,SGTYES
+SGTNO:  XOR     A
+        RET
+SGTYES: LD      A,1
+        RET
+
+; ==========================================================================
+; PRODAB - PROD(4 LE) = MULA * MULB, signed 16x16 -> 32.
+; ==========================================================================
+PRODAB: XOR     A
+        LD      (PSIGN),A
+        LD      HL,(MULA)
+        BIT     7,H
+        JR      Z,PAAP
+        CALL    NEGHL
+        LD      A,(PSIGN)
+        XOR     1
+        LD      (PSIGN),A
+PAAP:   LD      (UA),HL
+        LD      HL,(MULB)
+        BIT     7,H
+        JR      Z,PABP
+        CALL    NEGHL
+        LD      A,(PSIGN)
+        XOR     1
+        LD      (PSIGN),A
+PABP:   LD      (UB),HL
+        CALL    UMUL
+        LD      A,(PSIGN)
+        OR      A
+        RET     Z
+        LD      HL,PROD
+        CALL    NEG32
+        RET
+
+; UMUL - PROD(4 LE) = UA * UB, unsigned 16x16 -> 32.
+;        Z80 shift-add: 32-bit accumulate via ADD HL,DE/ADC HL,DE,
+;        multiplicand shifted with SLA/RL on (HL), multiplier with SRL/RR,
+;        loop count kept entirely in A (no memory counter).
+UMUL:   LD      HL,(UA)
+        LD      (M32),HL
+        LD      HL,0
+        LD      (M32+2),HL
+        LD      (PROD),HL
+        LD      (PROD+2),HL
+        LD      BC,(UB)         ; BC = multiplier
+        LD      A,16
+UMLP:   BIT     0,C
+        JR      Z,UMNOAD
+        ; PROD += M32  (32-bit)
+        LD      HL,(M32)
+        LD      DE,(PROD)
+        ADD     HL,DE
+        LD      (PROD),HL
+        LD      HL,(M32+2)
+        LD      DE,(PROD+2)
+        ADC     HL,DE
+        LD      (PROD+2),HL
+UMNOAD: SRL     B               ; multiplier >>= 1 (logical)
+        RR      C
+        LD      HL,M32          ; M32 <<= 1 (32-bit LE)
+        SLA     (HL)
+        INC     HL
+        RL      (HL)
+        INC     HL
+        RL      (HL)
+        INC     HL
+        RL      (HL)
+        DEC     A
+        JP      NZ,UMLP
+        RET
+
+; NEGHL - HL = -HL  (Z80 two's-complement without CPL pair)
+NEGHL:  XOR     A
+        SUB     L
+        LD      L,A
+        SBC     A,A
+        SUB     H
+        LD      H,A
+        RET
+
+; NEG32 - 4-byte LE at (HL) = -value  (invert then +1, DJNZ loops)
+NEG32:  PUSH    HL
+        LD      B,4
+NG4C:   LD      A,(HL)
+        CPL
+        LD      (HL),A
+        INC     HL
+        DJNZ    NG4C
+        POP     HL
+        LD      B,4
+        SCF                     ; carry = 1 -> add 1
+NG4A:   LD      A,(HL)
+        ADC     A,0
+        LD      (HL),A
+        INC     HL
+        DJNZ    NG4A
+        RET
+
+; ==========================================================================
+; LQ8 - HL = signed (src 4-byte LE)/256 toward zero, clamped to int16.
+;       Input: HL -> 4-byte LE value.
+; ==========================================================================
+LQ8:    LD      DE,LWORK        ; copy src -> LWORK (Z80 block move)
+        LD      BC,4
+        LDIR
+        LD      A,(LWORK+3)
+        AND     80H
+        LD      (LQSGN),A
+        JR      Z,LQPOS
+        LD      HL,LWORK
+        CALL    NEG32           ; magnitude
+LQPOS:  LD      A,(LWORK+3)     ; m2 (after >>8: byte3 is top)
+        OR      A
+        JP      NZ,LQOVF
+        LD      A,(LWORK+1)
+        LD      L,A
+        LD      A,(LWORK+2)
+        LD      H,A             ; HL = low 16 of magnitude>>8
+        BIT     7,H
+        JR      NZ,LQBIG
+        ; 0..32767
+        LD      A,(LQSGN)
+        OR      A
+        RET     Z
+        CALL    NEGHL
+        RET
+LQBIG:  LD      A,(LQSGN)
+        OR      A
+        JP      Z,LQOVFP        ; positive -> clamp 32767
+        LD      A,H             ; negative: val > 0x8000 ?
+        CP      80H
+        JP      NZ,LQOVFN
+        LD      A,L
+        OR      A
+        JP      NZ,LQOVFN
+        LD      HL,8000H        ; val == 0x8000 -> -32768
+        RET
+LQOVF:  LD      A,(LQSGN)
+        OR      A
+        JP      Z,LQOVFP
+LQOVFN: LD      HL,8000H
+        RET
+LQOVFP: LD      HL,7FFFH
+        RET
+
+; ==========================================================================
+; ADDCL - saturating 16-bit add: (HL) += DE, clamp to int16.
+;         Input: HL -> int16 dst, DE = addend.
+;         Uses the Z80 ADC HL,DE overflow (P/V) flag to detect saturation.
+; ==========================================================================
+ADDCL:  PUSH    HL              ; save dst ptr
+        LD      A,(HL)          ; low byte
+        INC     HL
+        LD      H,(HL)          ; high byte
+        LD      L,A             ; HL = dst value
+        OR      A               ; clear carry
+        ADC     HL,DE           ; HL = dst + DE, P/V = signed overflow
+        JP      PO,ADCST        ; no overflow -> store result
+        JP      M,ADCNEG        ; overflow + result negative -> was +overflow
+        LD      HL,8000H        ; overflow + result positive -> -overflow
+        JP      ADCST
+ADCNEG: LD      HL,7FFFH
+ADCST:  POP     DE              ; DE = dst ptr
+        LD      A,L
+        LD      (DE),A
+        INC     DE
+        LD      A,H
+        LD      (DE),A
+        RET
+
+; ==========================================================================
+; ASR2 - HL = floor(HL / 4), arithmetic (sign preserving).
+;        Two Z80 arithmetic shifts: SRA H / RR L  (entry ASR1 = one shift).
+; ==========================================================================
+ASR2:   SRA     H
+        RR      L
+ASR1:   SRA     H
+        RR      L
+        RET
+
+; ==========================================================================
+; SHR3 - HL = HL >> 3 (logical).  Z80 SRL H / RR L, DJNZ x3.
+; ==========================================================================
+SHR3:   LD      B,3
+SHR3L:  SRL     H
+        RR      L
+        DJNZ    SHR3L
+        RET
+
+; ==========================================================================
+; SHL32 - 4-byte LE at (HL) <<= 1, MSB -> carry.  Z80 SLA/RL on (HL).
+; ==========================================================================
+SHL32:  SLA     (HL)
+        INC     HL
+        RL      (HL)
+        INC     HL
+        RL      (HL)
+        INC     HL
+        RL      (HL)
+        RET
+
+; ==========================================================================
+; FXDIV - HL = (a << 8) / b, unsigned, clamp to int16.
+;         Input: HL = a (>=0), DE = b (>0).
+;         Z80: SBC HL,DE compare, SET 0,(HL) quotient bit, SHL32 shift.
+; ==========================================================================
+FXDIV:  XOR     A
+        LD      (NUM),A
+        LD      (NUM+3),A
+        LD      A,L
+        LD      (NUM+1),A
+        LD      A,H
+        LD      (NUM+2),A       ; NUM = a << 8
+        EX      DE,HL
+        LD      (DVS),HL        ; DVS = b
+        LD      BC,0            ; REM = 0
+        LD      A,32
+        LD      (FXCNT),A
+FXLP:   LD      HL,NUM          ; NUM <<= 1, MSB -> carry (BC untouched)
+        CALL    SHL32
+        RL      C               ; REM = (REM<<1) | carry
+        RL      B
+        LD      H,B
+        LD      L,C             ; HL = REM
+        LD      DE,(DVS)        ; DE = DVS
+        OR      A               ; clear carry
+        SBC     HL,DE           ; HL = REM - DVS, carry = borrow
+        JR      C,FXSKIP        ; REM < DVS
+        LD      B,H
+        LD      C,L             ; REM = REM - DVS
+        LD      HL,NUM
+        SET     0,(HL)          ; quotient bit
+FXSKIP: LD      A,(FXCNT)
+        DEC     A
+        LD      (FXCNT),A
+        JP      NZ,FXLP
+        LD      A,(NUM+2)       ; clamp quotient to int16
+        LD      B,A
+        LD      A,(NUM+3)
+        OR      B
+        JR      NZ,FXBIG
+        LD      HL,(NUM)
+        BIT     7,H
+        JR      NZ,FXBIG
+        RET
+FXBIG:  LD      HL,7FFFH
+        RET
+
+; ==========================================================================
+; MKFCB - build FIN (drive 0, name.ext) from NUL-terminated name at HL.
+; ==========================================================================
+MKFCB:  XOR     A
+        LD      (FIN),A
+        PUSH    HL
+        LD      HL,FIN+1
+        LD      B,11
+MFSPC:  LD      (HL),' '
+        INC     HL
+        DJNZ    MFSPC
+        POP     HL
+        LD      DE,FIN+1
+        LD      B,8
+MFNMLP: LD      A,(HL)
+        OR      A
+        JP      Z,MFDONE
+        CP      '.'
+        JP      Z,MFDOT
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        DJNZ    MFNMLP
+MFSKN:  LD      A,(HL)
+        OR      A
+        JP      Z,MFDONE
+        CP      '.'
+        JP      Z,MFDOT
+        INC     HL
+        JR      MFSKN
+MFDOT:  INC     HL
+        LD      DE,FIN+9
+        LD      B,3
+MFEXLP: LD      A,(HL)
+        OR      A
+        JR      Z,MFDONE
+        LD      (DE),A
+        INC     HL
+        INC     DE
+        DJNZ    MFEXLP
+MFDONE: XOR     A
+        LD      (FIN+12),A
+        LD      (FIN+13),A
+        LD      (FIN+14),A
+        LD      (FIN+15),A
+        LD      (FIN+32),A
+        RET
+
+; ==========================================================================
+; PRDIG - print digit (A = 0..9) followed by a space.
+; ==========================================================================
+PRDIG:  ADD     A,'0'
+        CALL    COUT
+        LD      A,' '
+        CALL    COUT
+        RET
+
+; ==========================================================================
+; PRDEC - print HL as unsigned decimal (no leading zeros).
+; ==========================================================================
+PRDEC:  LD      A,H
+        OR      L
+        JR      NZ,PRD1
+        LD      A,'0'           ; value 0
+        CALL    COUT
+        RET
+PRD1:   LD      C,0             ; digit count
+        PUSH    HL              ; keep value while setting digit pointer
+        LD      HL,DBUF+8       ; build digits backwards
+        LD      (DBPTR),HL
+        POP     HL
+PRDLP:  LD      A,H
+        OR      L
+        JR      Z,PRDPR
+        CALL    UDV10           ; HL/=10, A=remainder
+        ADD     A,'0'
+        LD      B,A
+        PUSH    HL              ; save quotient; UDV10 uses DE
+        LD      HL,(DBPTR)
+        DEC     HL
+        LD      (DBPTR),HL
+        LD      (HL),B
+        POP     HL
+        INC     C
+        JR      PRDLP
+PRDPR:  LD      HL,(DBPTR)      ; HL -> first digit, C = count
+PRDP1:  LD      A,C
+        OR      A
+        RET     Z
+        LD      A,(HL)
+        CALL    COUT
+        INC     HL
+        DEC     C
+        JR      PRDP1
+
+; UDV10 - HL = HL/10, A = remainder (repeated subtraction).
+UDV10:  LD      DE,0
+UDVLP:  LD      A,H
+        OR      A
+        JR      NZ,UDVSUB
+        LD      A,L
+        CP      10
+        JR      C,UDVDN
+UDVSUB: LD      A,L
+        SUB     10
+        LD      L,A
+        LD      A,H
+        SBC     A,0
+        LD      H,A
+        INC     DE
+        JR      UDVLP
+UDVDN:  LD      A,L             ; remainder
+        EX      DE,HL           ; HL = quotient
+        RET
+
+; ==========================================================================
+; PUTSTR - print NUL-terminated string at HL via console out.
+; ==========================================================================
+PUTSTR: LD      A,(HL)
+        OR      A
+        RET     Z
+        CALL    COUT
+        INC     HL
+        JR      PUTSTR
+
+; ==========================================================================
+; PSTR - print '$'-terminated string at DE via BDOS func 9.
+; ==========================================================================
+PSTR:   PUSH    HL
+        PUSH    DE
+        PUSH    BC
+        LD      C,FPRSTR
+        CALL    BDOSE
+        POP     BC
+        POP     DE
+        POP     HL
+        RET
+
+; ==========================================================================
+; COUT - print char in A via BDOS func 2; preserves all registers.
+; ==========================================================================
+COUT:   PUSH    HL
+        PUSH    DE
+        PUSH    BC
+        PUSH    AF
+        LD      E,A
+        LD      C,FCONO
+        CALL    BDOSE
+        POP     AF
+        POP     BC
+        POP     DE
+        POP     HL
+        RET
+
+; ==========================================================================
+; Messages
+; ==========================================================================
+MBAN1:  DB      'attn/11 inference - paper tape is all you need',13,10,'$'
+MLOAD:  DB      'loading weights from ATTN.WTS ...',13,10,13,10,'$'
+MNOWTS: DB      'no weights file found - run ',27H,'attn -t',27H,' first',13,10,'$'
+MNOIN:  DB      'cannot open input file ','$'
+MHELP:  DB      'attnz80 - tiny transformer that reverses 8 digits',13,10,13,10
+        DB      'usage:',13,10
+        DB      '  attnz80          infer from ATTN.IN',13,10
+        DB      '  attnz80 <file>   infer from <file>',13,10
+        DB      '  attnz80 -h       this help',13,10,'$'
+MARROW: DB      '-> ','$'
+MOK:    DB      ' ok',13,10,'$'
+MFAIL:  DB      ' fail',13,10,'$'
+MACC:   DB      13,10,'accuracy  ','$'
+MTIME:  DB      'run time  ','$'
+MSECS:  DB      ' s',13,10,'$'
+MCRLF:  DB      13,10,'$'
+DEFIN:  DB      'ATTN.IN',0
+
+; ==========================================================================
+; exptbl[256] - exp(-i/32) in Q8 (identical to ATTN.C)
+; ==========================================================================
+EXPTBL: DW      256,248,240,233,226,219,212,206,199,193,187,182,176,171,165,160
+        DW      155,150,146,141,137,133,129,125,121,117,114,110,107,103,100,97
+        DW      94,91,88,86,83,81,78,76,73,71,69,67,65,63,61,59
+        DW      57,55,54,52,50,49,47,46,44,43,42,41,39,38,37,36
+        DW      35,34,33,32,31,30,29,28,27,26,25,25,24,23,22,22
+        DW      21,20,20,19,19,18,17,17,16,16,15,15,14,14,14,13
+        DW      13,12,12,12,11,11,11,10,10,10,9,9,9,8,8,8
+        DW      8,7,7,7,7,7,6,6,6,6,6,5,5,5,5,5
+        DW      5,5,4,4,4,4,4,4,4,4,3,3,3,3,3,3
+        DW      3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,2
+        DW      2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1
+        DW      1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+        DW      1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0
+        DW      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        DW      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        DW      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+; ==========================================================================
+; Weights FCB (ATTN.WTS on current drive), pre-built
+; ==========================================================================
+FWTS:   DB      0,'ATTN    ','WTS',0,0,0,0
+        DB      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        DB      0
+
+; ==========================================================================
+; Scratch / state
+; ==========================================================================
+OLDSP:  DS      2
+FIN:    DS      36              ; input file FCB
+FNAME:  DS      20
+
+MULA:   DS      2
+MULB:   DS      2
+UA:     DS      2
+UB:     DS      2
+PSIGN:  DS      1
+PROD:   DS      4
+M32:    DS      4
+ACC:    DS      4
+LWORK:  DS      4
+LQSGN:  DS      1
+NUM:    DS      4
+DVS:    DS      2
+FXCNT:  DS      1
+
+VPTR:   DS      2
+VN:     DS      1
+MXVAL:  DS      2
+IDX:    DS      1
+VMP:    DS      2
+VMI:    DS      1
+
+XPTR:   DS      2
+YPTR:   DS      2
+VDN:    DS      1
+
+VTMAT:  DS      2
+VTVIN:  DS      2
+VTVOUT: DS      2
+VTROWS: DS      1
+VTCOLS: DS      1
+MATP:   DS      2
+VINP:   DS      2
+VOUTP:  DS      2
+VSC:    DS      2
+VTRI:   DS      1
+VTCJ:   DS      1
+
+EXXP:   DS      2
+EPSEP:  DS      2
+ETOKP:  DS      2
+ETKEP:  DS      2
+EMBI:   DS      1
+EMBJ:   DS      1
+
+AXIP:   DS      2
+AQP:    DS      2
+AKP:    DS      2
+AVP:    DS      2
+AQIP:   DS      2
+AKJP:   DS      2
+AAP:    DS      2
+AAI:    DS      1
+AAJ:    DS      1
+ARCNT:  DS      2
+
+SFVEC:  DS      2
+SFN:    DS      1
+SFP:    DS      2
+SFI:    DS      1
+SUM:    DS      2
+
+WBUFP:  DS      2
+QBUFP:  DS      2
+CVCNT:  DS      2
+DMAP:   DS      2
+WCNT:   DS      1
+
+ISP:    DS      2
+ISI:    DS      1
+OKF:    DS      1
+FHITS:  DS      2
+NSEQ:   DS      2
+DIGI:   DS      1
+
+DBUF:   DS      8
+DBPTR:  DS      2
+
+SECBUF: DS      128
+
+; --- big arrays -----------------------------------------------------------
+WBUF:   DS      4864            ; Q16 weights (38 sectors)
+QBUF:   DS      2432            ; Q8 weights (1216 ints)
+WORKB:  DS      896             ; attn workspace Q|K|V|A
+XX:     DS      256             ; embeddings
+YY:     DS      256             ; attn output
+LOGB:   DS      160             ; logits (S*V ints)
+TOKENS: DS      16              ; current 8 tokens
+
+QTKEB   EQU     QBUF
+QPSEB   EQU     QBUF+320
+QWQB    EQU     QBUF+576
+QWKB    EQU     QBUF+1088
+QWVB    EQU     QBUF+1600
+QWOTB   EQU     QBUF+2112
+
+WQB     EQU     WORKB
+WKB     EQU     WORKB+256
+WVB     EQU     WORKB+512
+WAB     EQU     WORKB+768
+
+        DS      512
+STACK:
+
+        END     START
