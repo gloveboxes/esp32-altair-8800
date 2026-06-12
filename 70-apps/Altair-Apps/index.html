@@ -1,0 +1,3151 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Altair 8800 AI Edition">
+      
+      
+        <meta name="author" content="Dave Glover">
+      
+      
+      
+        <link rel="prev" href="../../45-build-from-source/05-Run-the-emulator/">
+      
+      
+        <link rel="next" href="../../60-programming/00-Introduction/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../media/favicon.ico">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Altair Apps - Altair 8800 AI Edition</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="pink">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#altair-apps" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Altair 8800 AI Edition" class="md-header__button md-logo" aria-label="Altair 8800 AI Edition" data-md-component="logo">
+      
+  <img src="../../media/favicon.ico" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Altair 8800 AI Edition
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Altair Apps
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="pink" aria-label="Switch to dark mode" type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 2c-1.82 0-3.53.5-5 1.35C8 5.08 10 8.3 10 12s-2 6.92-5 8.65C6.47 21.5 8.18 22 10 22a10 10 0 0 0 10-10A10 10 0 0 0 10 2"></path></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="amber" data-md-color-accent="cyan" aria-label="Switch to light mode" type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/gloveboxes/esp32-altair-8800" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    Altair 8800 AI Edition
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Altair 8800 AI Edition" class="md-nav__button md-logo" aria-label="Altair 8800 AI Edition" data-md-component="logo">
+      
+  <img src="../../media/favicon.ico" alt="logo">
+
+    </a>
+    Altair 8800 AI Edition
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/gloveboxes/esp32-altair-8800" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    Altair 8800 AI Edition
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix="">
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../navigating-the-docs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigating the Docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fundamentals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Fundamentals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/05-Introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/10-deployment-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/23-Altair-emulator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The Emulator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/25-Web-Terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start the Web Terminal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/30-introduction-cpm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learn about CP/M
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20-fundamentals/40-Rebooting-the-Altair/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rebooting the Emulator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy with Docker
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy with Docker
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../40-deploy-with-docker/10-introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../40-deploy-with-docker/15-install-prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../40-deploy-with-docker/17-start-container/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start the Emulator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5">
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build from source
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Build from source
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/01-Introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/03-Build-from-vs-code/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build from Visual Studio Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3">
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build from Command Line
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Build from Command Line
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_1">
+        
+          
+          <label class="md-nav__link" for="__nav_5_3_1" id="__nav_5_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Install Prerequisites
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/Install%20prerequisites/01-Linux-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Linux
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/Install%20prerequisites/02-macOS-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    macOS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/Install%20prerequisites/03-Windows-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Windows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/Install%20prerequisites/04-Raspberry-Pi-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Raspberry Pi OS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/04-Compile-from-CLI/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Source
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../45-build-from-source/05-Run-the-emulator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start the Emulator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Altair Apps
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Altair Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#apps-in-this-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps in this catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#breakout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breakout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clock
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Edit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ENV
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft-file-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FT (File Transfer)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mancala" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mancala
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sheets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#snake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tetris" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tetris
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tictac" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TicTac
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7">
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Program the Altair
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Program the Altair
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/00-Introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/00-Manuals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manuals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/01-Vibe-Coding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agentic Engineering the Altair
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/01-Editing-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Editing Files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/01-i8080-IO-Ports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intel 8080 IO Ports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/02-Microsoft-BASIC-programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Microsoft BASIC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/03-C-programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    C Programming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/04-Assembly-programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Intel 8080 Assembler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/05-Altair-BASIC-programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Altair BASIC Programming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../60-programming/06-Front-panel-programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Front Panel Programming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8">
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker Images
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Docker Images
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../40-deploy-with-docker/100-Create-Docker-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build Docker Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9">
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run on Azure Sphere
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run on Azure Sphere
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/03-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_3">
+        
+          
+          <label class="md-nav__link" for="__nav_9_3" id="__nav_9_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy the Altair
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy the Altair
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/01-Deployment-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment Options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/02-Clone-Altair-repo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clone the Altair repo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/03-Deploy-prebuilt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Pre-built Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/04-WiFi-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Wi-Fi Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/05-Create-boot-SD-card/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create a Boot SD Card
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/06-Power-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Power Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/01-Deploy-the-Altair/07-Connect-Altair-web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Altair Web Terminal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_4">
+        
+          
+          <label class="md-nav__link" for="__nav_9_4" id="__nav_9_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud services
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Cloud services
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/Cloud-services/01-Add-cloud-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adding Cloud Services
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_5">
+        
+          
+          <label class="md-nav__link" for="__nav_9_5" id="__nav_9_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compile and Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compile and Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/Compile-and-deploy/01-Install-developer-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install Developer Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/Compile-and-deploy/02-Deploy-the-Altair-to-Azure-Sphere/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy the Altair Emulator
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../50-azsphere/40-Manage-disk-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manage Disk Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#apps-in-this-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps in this catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attn
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#breakout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breakout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#clock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clock
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Edit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ENV
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ft-file-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FT (File Transfer)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mancala" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mancala
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sheets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sheets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#snake" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snake
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tetris" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tetris
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tictac" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TicTac
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="altair-apps">Altair Apps<a class="headerlink" href="#altair-apps" title="Permanent link">¶</a></h1>
+<p>A collection of games and utilities that run under CP/M on the Altair 8800
+emulator and firmware. Every app in this catalog was <strong>agentic engineered</strong> with
+Claude and OpenAI foundation models, using a purpose-built toolchain for retro 8080 development:</p>
+<ul>
+<li><strong>BDS C apps</strong> were generated with the <code>bds-c</code> skill, validated with the
+  <code>check-bds-c.py</code> checker, and built and run end-to-end on the
+  <code>altair_cpm_build</code> MCP server.</li>
+<li><strong>MAC assembly apps</strong> were generated with the <code>mac-asm</code> skill, validated
+  with the <code>check_mac_asm.py</code> checker, and built and run on the same
+  <code>altair_cpm_build</code> MCP server.</li>
+</ul>
+<p>This combination lets a foundation model write, lint, compile, link, and test
+authentic Altair 8800 software without leaving the editor. Several apps ship in
+both a BDS C (<code>.C</code>) and a MAC assembler (<code>.ASM</code>) implementation with identical
+behavior.</p>
+<div class="admonition tip">
+<p class="admonition-title">Built-in help</p>
+<p>Most apps surface their own help. Pass <code>-H</code> (or <code>/?</code>) on the command line
+for command-line apps, and press the in-app help key (often <code>Ctrl-W</code>) once
+a full-screen app is running. The help available in each app is reproduced
+below.</p>
+</div>
+<h2 id="apps-in-this-catalog">Apps in this catalog<a class="headerlink" href="#apps-in-this-catalog" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="#attn">Attn</a> — tiny transformer that learns to reverse a sequence</li>
+<li><a href="#breakout">Breakout</a> — brick-breaker arcade game</li>
+<li><a href="#chat">Chat</a> — OpenAI / compatible chat client</li>
+<li><a href="#clock">Clock</a> — 7-segment clock with weather panel</li>
+<li><a href="#edit">Edit</a> — Nano inspired full-screen text editor</li>
+<li><a href="#env">ENV</a> — environment-variable manager</li>
+<li><a href="#ft-file-transfer">FT (File Transfer)</a> — download files from a Remote FT Server</li>
+<li><a href="#mancala">Mancala</a> — Kalah-style bean game vs. computer</li>
+<li><a href="#sheets">Sheets</a> — tiny VT100 spreadsheet</li>
+<li><a href="#snake">Snake</a> — classic snake game</li>
+<li><a href="#tetris">Tetris</a> — full Tetris engine</li>
+<li><a href="#tictac">TicTac</a> — 5x5 Tic-Tac-Toe vs. computer</li>
+</ul>
+<hr>
+<h2 id="attn">Attn<a class="headerlink" href="#attn" title="Permanent link">¶</a></h2>
+<p>"Paper Tape is All You Need": a one-layer, one-head transformer that trains
+itself to reverse an 8-digit sequence, written in BDS C. It is a port of the
+PDP-11 assembly program <code>attn.s</code>
+(<a href="https://github.com/davepl/pdpsrc/tree/main/bsd/attn">davepl/pdpsrc</a>), itself
+derived from Damien Boureille's NN11 library. For background on the original
+PDP-11 version, see Dave Plummer's video
+<a href="https://youtu.be/OUE3FSIk46g?si=Hqf_lmAycI_rA-Me">Paper Tape is All You Need</a>.
+All math is software fixed-point — Q8 forward activations, Q15 gradients, and
+Q16 weight accumulators carried in 32-bit integers via the BDS C <code>LONG</code>
+package, since the 8080 has no hardware multiply, divide, or shift.</p>
+<p>It prints a banner, then either trains or runs inference. Training runs 350
+steps (reporting loss and accuracy every 50 steps, with a <code>.</code> heartbeat per
+step) and saves the learned weights to <code>ATTN.WTS</code> on the current drive.
+Inference reloads those weights and reverses each 8-digit sequence read from an
+input file (default <code>ATTN.IN</code>, one sequence per line). Training is slow on the
+emulated 8080 because every multiply is done in software; inference is much
+quicker.</p>
+<p>The weight file is about 5 KB (38 sectors), so run from a drive with free
+space — the A: system disk is nearly full. A sample <code>ATTN.IN</code> is installed
+alongside the program.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; ATTN -T        train, save weights to ATTN.WTS, then test
+A&gt; ATTN           infer from ATTN.IN using the saved weights (default)
+A&gt; ATTN &lt;file&gt;    infer from &lt;file&gt; instead of ATTN.IN
+A&gt; ATTN -H        command-line help
+</code></pre></div>
+<p>Run <code>ATTN -T</code> once to train, then <code>ATTN</code> as often as you like to re-run
+inference without retraining. The weights and the <code>ATTN.IN</code> input file are read
+from the current drive, so log into a drive with free space (for example <code>C:</code>)
+before training. If no weights file exists yet, <code>ATTN</code> reports that and asks
+you to train first; if no input file is found it falls back to a random demo.</p>
+<hr>
+<h2 id="breakout">Breakout<a class="headerlink" href="#breakout" title="Permanent link">¶</a></h2>
+<p>Classic brick-breaker rendered on a VT100/xterm.js terminal.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; BREAKOUT
+</code></pre></div>
+<p><strong>Controls</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Left/Right arrows</td>
+<td>Move paddle</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Launch ball</td>
+</tr>
+<tr>
+<td>ESC or Ctrl-C</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="chat">Chat<a class="headerlink" href="#chat" title="Permanent link">¶</a></h2>
+<p>A CP/M client for the OpenAI Chat Completions API and any OpenAI-compatible
+endpoint (Ollama, llama.cpp server, LM Studio, vLLM, ...). It talks to the host
+over Intel 8080 I/O ports, backed by libcurl on the desktop emulator and the
+ESP-IDF HTTP client on the ESP32 firmware.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; CHAT          start a chat session
+A&gt; CHAT -H       show command-line help
+</code></pre></div>
+<p><strong>Configuration</strong> is read from the Altair env store via the <a href="#env">ENV</a> app.
+Set values with <code>ENV NAME=value</code>; they are read fresh each time <code>CHAT</code> starts.</p>
+<div class="highlight"><pre><span></span><code>A&gt; ENV CHAT_PROVIDER=openai
+A&gt; ENV CHAT_OPENAI_KEY=sk-proj-xxxxxxxxxxxx
+A&gt; ENV CHAT_MODEL=gpt-4o-mini
+A&gt; CHAT
+</code></pre></div>
+<p>OpenAI-compatible (e.g. Ollama on the LAN):</p>
+<div class="highlight"><pre><span></span><code>A&gt; ENV CHAT_PROVIDER=compatible
+A&gt; ENV CHAT_ENDPOINT=http://192.168.1.20:11434/v1/chat/completions
+A&gt; ENV CHAT_MODEL=gemma3:1b
+A&gt; CHAT
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CHAT_PROVIDER</code></td>
+<td>—</td>
+<td><code>openai</code> or <code>compatible</code></td>
+</tr>
+<tr>
+<td><code>CHAT_ENDPOINT</code></td>
+<td>—</td>
+<td>Full URL when <code>CHAT_PROVIDER=compatible</code></td>
+</tr>
+<tr>
+<td><code>CHAT_OPENAI_KEY</code></td>
+<td>—</td>
+<td>Bearer token for <code>openai</code></td>
+</tr>
+<tr>
+<td><code>CHAT_MODEL</code></td>
+<td><code>gemma3:1b</code></td>
+<td>Model name passed to the API</td>
+</tr>
+<tr>
+<td><code>CHAT_MAX_TOKENS</code></td>
+<td><code>1024</code></td>
+<td><code>max_tokens</code> in the request</td>
+</tr>
+<tr>
+<td><code>CHAT_TEMPERATURE</code></td>
+<td><code>0.7</code></td>
+<td>Sampling temperature</td>
+</tr>
+</tbody>
+</table>
+<p><strong>In-chat commands</strong></p>
+<div class="highlight"><pre><span></span><code>Commands: /help (/?)  /history (/h)  /reset (/r)  /quit (/q)
+</code></pre></div>
+<hr>
+<h2 id="clock">Clock<a class="headerlink" href="#clock" title="Permanent link">¶</a></h2>
+<p>A 70s-style 7-segment psychedelic clock that reads the ESP32 local wall clock
+and shows the time as chunky VT100 character blocks, with the colon blinking
+every second. It also displays the current date and an optional weather panel.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; CLOCK         start the clock
+A&gt; CLOCK -H      show command-line help
+</code></pre></div>
+<p>Press <strong>ESC</strong> or <strong>Ctrl-C</strong> to quit.</p>
+<p><strong>Configuration</strong> (set with the <a href="#env">ENV</a> app):</p>
+<div class="highlight"><pre><span></span><code>A&gt; ENV UTC_OFFSET=10.0     UTC offset in hours (e.g. 8.5, -8.5)
+</code></pre></div>
+<p>Restart the ESP32/emulator after changing <code>UTC_OFFSET</code>; the offset is read once
+at startup and cached by the firmware.</p>
+<hr>
+<h2 id="edit">Edit<a class="headerlink" href="#edit" title="Permanent link">¶</a></h2>
+<p>A full-screen WordStar-style text editor for CP/M.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; EDIT filename
+</code></pre></div>
+<p>Press <strong>Ctrl-W</strong> inside the editor at any time to show the help screen.</p>
+<p><strong>Keys</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrow keys</td>
+<td>Move cursor</td>
+</tr>
+<tr>
+<td>Ctrl-R / V</td>
+<td>Page up / Page down</td>
+</tr>
+<tr>
+<td>Ctrl-T / B</td>
+<td>Go to top / bottom</td>
+</tr>
+<tr>
+<td>Ctrl-O</td>
+<td>Write file to disk</td>
+</tr>
+<tr>
+<td>ESC / Ctrl-Q</td>
+<td>Exit editor</td>
+</tr>
+<tr>
+<td>Ctrl-K</td>
+<td>Cut current line</td>
+</tr>
+<tr>
+<td>Ctrl-C</td>
+<td>Copy current line</td>
+</tr>
+<tr>
+<td>Ctrl-U</td>
+<td>Paste (uncut) line</td>
+</tr>
+<tr>
+<td>Ctrl-F</td>
+<td>Find</td>
+</tr>
+<tr>
+<td>Ctrl-N</td>
+<td>Find next</td>
+</tr>
+<tr>
+<td>Ctrl-W</td>
+<td>Help</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="env">ENV<a class="headerlink" href="#env" title="Permanent link">¶</a></h2>
+<p>The environment-variable manager for CP/M. Variables are stored on the ESP32
+(or in <code>altair_local/altair_env.txt</code> on the host emulator) and shared by other
+apps such as <a href="#chat">Chat</a> and <a href="#clock">Clock</a>. The command line is parsed by
+the firmware/host driver, which supports value copying, arithmetic, and
+increment/decrement operators in addition to plain set/get.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; ENV                  enter interactive mode (no arguments)
+A&gt; ENV -H               show the built-in help (also HELP or ?)
+</code></pre></div>
+<p><strong>Commands</strong> (from the built-in <code>ENV -H</code> help)</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENV</code></td>
+<td>List all variables</td>
+</tr>
+<tr>
+<td><code>ENV NAME</code></td>
+<td>Show <code>NAME</code></td>
+</tr>
+<tr>
+<td><code>ENV NAME=VALUE</code></td>
+<td>Set <code>NAME</code> to <code>VALUE</code></td>
+</tr>
+<tr>
+<td><code>ENV NAME=VALUE TWO</code></td>
+<td>Set <code>NAME</code> to text with spaces</td>
+</tr>
+<tr>
+<td><code>ENV NAME=OTHER</code></td>
+<td>Copy value from <code>OTHER</code> if <code>OTHER</code> exists</td>
+</tr>
+<tr>
+<td><code>ENV NAME=A+B</code></td>
+<td>Store numeric <code>A</code> plus <code>B</code></td>
+</tr>
+<tr>
+<td><code>ENV NAME=A-B</code></td>
+<td>Store numeric <code>A</code> minus <code>B</code></td>
+</tr>
+<tr>
+<td><code>ENV NAME+N</code></td>
+<td>Add <code>N</code> to numeric <code>NAME</code> (default 0)</td>
+</tr>
+<tr>
+<td><code>ENV NAME-N</code></td>
+<td>Subtract <code>N</code> from numeric <code>NAME</code></td>
+</tr>
+<tr>
+<td><code>ENV NOW</code></td>
+<td>Show emulator uptime in seconds</td>
+</tr>
+<tr>
+<td><code>ENV -I NAME=VALUE</code></td>
+<td>Set only if <code>NAME</code> is undefined</td>
+</tr>
+<tr>
+<td><code>ENV -D NAME</code></td>
+<td>Delete <code>NAME</code></td>
+</tr>
+<tr>
+<td><code>ENV -N</code></td>
+<td>Show variable count</td>
+</tr>
+<tr>
+<td><code>ENV -H</code> / <code>HELP</code> / <code>?</code></td>
+<td>Show the built-in help</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Operators</strong></p>
+<p>The <code>+</code> and <code>-</code> operators work on the numeric value of a variable. The
+left-hand side may be a number, another variable name, or <code>NOW</code>; the
+increment/decrement form treats a missing variable as <code>0</code>.</p>
+<div class="highlight"><pre><span></span><code>A&gt; ENV COUNT=0          set COUNT to 0
+A&gt; ENV COUNT+1          increment COUNT by 1  -&gt; COUNT=1
+A&gt; ENV COUNT+10         add 10                -&gt; COUNT=11
+A&gt; ENV COUNT-10         subtract 10           -&gt; COUNT=1
+A&gt; ENV TOTAL=COUNT+5    store COUNT plus 5    -&gt; TOTAL=6
+A&gt; ENV ELAPSED=NOW-START  difference of two numeric vars
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Spaces around <code>=</code>, <code>+</code>, and <code>-</code> are optional, so <code>ENV COUNT + 1</code>,
+<code>ENV COUNT +1</code>, and <code>ENV COUNT+1</code> are equivalent. Arithmetic requires
+numeric values — applying an operator to non-numeric text returns an
+error. Names are limited to 16 characters (stored uppercase) and values
+to 127 characters.</p>
+</div>
+<p><strong>Interactive mode</strong> (run <code>ENV</code> with no arguments) loads the variables from the
+ESP32 and presents a menu:</p>
+<div class="highlight"><pre><span></span><code>[number]=edit  A=add  D &lt;n&gt;=delete  N=next  P=prev  L=reload  R=reboot  Q=quit
+</code></pre></div>
+<p>Values are edited at a prompt that preserves mixed case.</p>
+<hr>
+<h2 id="ft-file-transfer">FT (File Transfer)<a class="headerlink" href="#ft-file-transfer" title="Permanent link">¶</a></h2>
+<p>Downloads files from a Remote FT Server into CP/M. Ships as both a BDS C
+(<code>FT.C</code>) and a MAC assembler (<code>FT.ASM</code>) build with identical behavior.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; ft -g  &lt;filename&gt;    text file: normalize line endings to CP/M CR LF, add ^Z
+A&gt; ft -gb &lt;filename&gt;    binary file: store bytes verbatim, no ^Z
+</code></pre></div>
+<ul>
+<li>Use <code>-g</code> for source and text files (<code>.C</code>, <code>.ASM</code>, <code>.SUB</code>, <code>.H</code>, ...). Incoming
+  CR is stripped and each LF expanded to CR LF, then a single <code>^Z</code> end-of-text
+  marker is written.</li>
+<li>Use <code>-gb</code> for binary files (<code>.COM</code>, images, archives, ...). Bytes are written
+  exactly as received; the final partial 128-byte record is padded with NUL.</li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; ft -g test.txt
+Downloading 'test.txt' from Remote FT Server...
+Done (84 bytes)
+</code></pre></div>
+<p>Requires the Altair emulator with WiFi/Remote FT support and a Remote FT Server
+running on the configured IP address:8090.</p>
+<hr>
+<h2 id="mancala">Mancala<a class="headerlink" href="#mancala" title="Permanent link">¶</a></h2>
+<p>The African bean game (Kalah-style rules), player versus computer, on a
+VT100/xterm.js display.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; MANCALA
+</code></pre></div>
+<p><strong>Controls</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>E / M / H</td>
+<td>Easy / Medium / Hard</td>
+</tr>
+<tr>
+<td>Left/Right arrows</td>
+<td>Select pit</td>
+</tr>
+<tr>
+<td>1-6</td>
+<td>Select pit</td>
+</tr>
+<tr>
+<td>Space or Return</td>
+<td>Sow selected pit</td>
+</tr>
+<tr>
+<td>U</td>
+<td>Undo last player move</td>
+</tr>
+<tr>
+<td>? or T</td>
+<td>Hint</td>
+</tr>
+<tr>
+<td>Q, ESC, Ctrl-C</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="sheets">Sheets<a class="headerlink" href="#sheets" title="Permanent link">¶</a></h2>
+<p>A tiny VT100 spreadsheet for CP/M. The grid is 26 columns (<code>A</code>..<code>Z</code>) by 99
+rows, with 7 columns x 20 rows visible and scrolling. Cells hold text, an
+integer, or a formula, with 32-bit signed integer arithmetic.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; SHEETS
+</code></pre></div>
+<p>Press <strong>Ctrl-W</strong> for in-app help.</p>
+<p><strong>Keys</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrow keys</td>
+<td>Move cursor</td>
+</tr>
+<tr>
+<td>Enter</td>
+<td>Edit current cell (keep contents)</td>
+</tr>
+<tr>
+<td>Any printable</td>
+<td>Start a fresh edit with that char</td>
+</tr>
+<tr>
+<td>Backspace</td>
+<td>(in edit) delete left</td>
+</tr>
+<tr>
+<td>ESC</td>
+<td>(in edit) cancel; (in nav) quit</td>
+</tr>
+<tr>
+<td>Ctrl-K</td>
+<td>Clear current cell</td>
+</tr>
+<tr>
+<td>Ctrl-O</td>
+<td>Write file</td>
+</tr>
+<tr>
+<td>Ctrl-L</td>
+<td>Reload file</td>
+</tr>
+<tr>
+<td>Ctrl-G</td>
+<td>Go to cell (e.g. <code>C12</code>)</td>
+</tr>
+<tr>
+<td>Ctrl-W</td>
+<td>Help</td>
+</tr>
+<tr>
+<td>Ctrl-Q</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Formulas</strong> start with <code>=</code>. Supported: integers and unary minus, binary
+<code>+ - * /</code> with precedence, parentheses, cell references (<code>=A1+B2*3</code>), and range
+functions over a rectangular block — <code>SUM</code>, <code>AVG</code>, <code>MIN</code>, <code>MAX</code>, <code>COUNT</code>
+(e.g. <code>=SUM(A1:B5)</code>). Errors render as <code>#ERR</code>.</p>
+<hr>
+<h2 id="snake">Snake<a class="headerlink" href="#snake" title="Permanent link">¶</a></h2>
+<p>The classic snake game. Collect food (<code>*</code>) to grow longer and raise your score;
+don't hit the walls or yourself.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; SNAKE
+</code></pre></div>
+<p><strong>Controls</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrow keys</td>
+<td>Change direction</td>
+</tr>
+<tr>
+<td>ESC / Q</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="tetris">Tetris<a class="headerlink" href="#tetris" title="Permanent link">¶</a></h2>
+<p>A full Tetris engine with a 7-bag piece supply, wall-kick rotation, soft drop,
+hard drop, scoring, and levels, on a bright block-terminal theme.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; TETRIS
+</code></pre></div>
+<p><strong>Controls</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Left/Right</td>
+<td>Move</td>
+</tr>
+<tr>
+<td>Up</td>
+<td>Rotate</td>
+</tr>
+<tr>
+<td>Down</td>
+<td>Soft drop</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Hard drop</td>
+</tr>
+<tr>
+<td>ESC / Q</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="tictac">TicTac<a class="headerlink" href="#tictac" title="Permanent link">¶</a></h2>
+<p>5x5 Tic-Tac-Toe — get four in a row to win. Player (X) versus computer (O) with
+a heuristic AI on a colorful VT100 cabinet display.</p>
+<p><strong>Run</strong></p>
+<div class="highlight"><pre><span></span><code>A&gt; TICTAC
+</code></pre></div>
+<p><strong>Controls</strong></p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrow keys</td>
+<td>Move cursor</td>
+</tr>
+<tr>
+<td>Space</td>
+<td>Place piece</td>
+</tr>
+<tr>
+<td>Q / ESC</td>
+<td>Quit</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer">
+        
+          
+          <a href="../../45-build-from-source/05-Run-the-emulator/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Start the Emulator">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Start the Emulator
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../60-programming/00-Introduction/" class="md-footer__link md-footer__link--next" aria-label="Next: Introduction">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Introduction
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"></path></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2023 - present Dave Glover
+
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.footer", "content.code.copy", "navigation.tabs.sticky", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>
